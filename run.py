@@ -1,39 +1,23 @@
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 import torch.optim as optim
-from torch.utils.data import Dataset, DataLoader
-from torchvision import datasets, transforms
-import pandas as pd
-import math
+from torch.utils.data import DataLoader
+from torchvision import transforms
 import numpy as np
-import random
-import datetime
-import sys
 import os
 import argparse
-from sklearn.model_selection import train_test_split
 from tqdm import tqdm
-import torch.nn.functional as F
 from DataProcessor import DataProcessor
-# from glycemicDataset import glycemicDataset
 from FeatureDataset import FeatureDataset
-from pp5 import pp5
+from torch.optim.lr_scheduler import CosineAnnealingLR
+import matplotlib.pyplot as plt
+import seaborn as sns
 from models.Conv1DModel import Conv1DModel
 from models.LstmModel import LstmModel
 from models.TransformerModel import TransformerModel
 from models.DannModel import DannModel
 from models.SslModel import SslModel
 from models.UNet import UNet
-from torch.optim.lr_scheduler import StepLR, CosineAnnealingLR
-from Loss import Loss
-import matplotlib.pyplot as plt
-import seaborn as sns
-import os
-import time
-# from torchviz import make_dot
-# import visualkeras
-# from torch.utils.tensorboard import SummaryWriter
 
 sns.set_theme()
 
@@ -98,16 +82,12 @@ class runModel:
             print(f"model {modelType}")
             return TransformerModel(num_features = self.dim_model, num_head = self.num_head, seq_length = self.seq_length, dropout_p = self.dropout_p, norm_first = True, dtype = self.dtype, num_seqs = self.num_features, no_gluc = self.no_gluc)
             # return TransformerModel(num_features = 1024, num_head = 256, seq_length = self.seq_length, dropout_p = self.dropout_p, norm_first = True, dtype = self.dtype)
-        elif modelType == "dann":
-            print(f"model {modelType}")
-            return DannModel(self.modelType, samples, dropout = self.dropout_p, seq_len = self.seq_length)
-        elif modelType == "ssl":
-            print(f"model {modelType}")
-            return SslModel(mask_len = 7, dropout = self.dropout_p, seq_len = self.seq_length)
         elif modelType == "unet":
             print(f"model {modelType}")
             return UNet(self.num_features, normalize = False, seq_len = self.seq_length)
-        return None
+        else:
+            raise Exception("Invalid model type")
+
 
     def train(self, model, train_dataloader, optimizer, scheduler, criterion):
         best_acc = -float('inf')
@@ -119,15 +99,11 @@ class runModel:
 
             progress_bar = tqdm(enumerate(train_dataloader), total=len(train_dataloader), desc=f'Epoch {epoch + 1}/{self.num_epochs}', unit='batch')
 
-            len_dataloader = len(train_dataloader)
-
             lossLst = []
             accLst = []
-
-            # sample, edaMean, hrMean, tempMean, accMean, glucPastMean, glucMean
             
             # for batch_idx, (sample, acc, sugar, carb, mins, hba1c, glucPast, glucPres) in progress_bar:
-            for batch_idx, data in progress_bar:
+            for _, data in progress_bar:
                 data = torch.Tensor(data).to(self.dtype)
                 # stack the inputs and feed as 3 channel input
                 data = data.squeeze(2)
@@ -137,39 +113,13 @@ class runModel:
                     input = data[:, :-1, :].to(self.dtype)
 
                 target = data[:, -1, :]
-                # input = data[:, :-2, :].to(self.dtype)
-                # target = data[:, -2, :]
-
-                # if self.normalize:
-                #     p = 2  # Using L2 norm
-                #     epsilon = 1e-12
-                #     input_norm = max(torch.norm(input, p=p), epsilon)  # Calculate the p-norm of v
-                #     target_norm = max(torch.norm(target, p=p), epsilon)  # Find the maximum between v_norm and epsilon
-                #     input = F.normalize(input)
-                #     target = F.normalize(target)
-
-                # zero index the dann target
-                # dannTarget = torch.tensor([int(i) - 1 for i in sample]).to(torch.long)
-
-                p = float(batch_idx + epoch * len_dataloader) / (self.num_epochs * len_dataloader)
-                alpha = 2. / (1. + np.exp(-10 * p)) - 1
 
                 if self.modelType == "conv1d" or self.modelType == "lstm" or self.modelType == "unet":
                     output = model(input).to(self.dtype).squeeze()
                 elif self.modelType == "transformer":
                     output = model(target, input).to(self.dtype).squeeze()
-                # elif self.modelType == "dann":
-                #     modelOut = model(input, alpha)
-                #     dann_output, output = modelOut[0].to(self.dtype), modelOut[1].to(self.dtype).squeeze()
-                else:
-                    modelOut = model(input)
-                    mask_output, output = modelOut[0].to(self.dtype), modelOut[1].to(self.dtype).squeeze()
 
                 loss = criterion(output, target)
-                # if self.modelType == "ssl":
-                #     loss = criterion(mask_output, input, label = "ssl")
-                # if self.modelType == "dann":
-                #     loss = criterion(dann_output, dannTarget, label = "dann")
 
                 optimizer.zero_grad()
                 loss.backward(retain_graph = True)
@@ -184,7 +134,6 @@ class runModel:
                 acc_val = 1 - self.mape(output_arr, target_arr)
                 
                 accLst.append(acc_val)
-                # persAccList.append(self.persAcc(output, target))
             scheduler.step()
 
             for outVal, targetVal in zip(output_arr.detach().numpy()[-1][:-3], target_arr.detach().numpy()[-1][:-3]):
@@ -213,8 +162,6 @@ class runModel:
         np.savez(file_path_acc, arr = np.array(global_acc_lst))
         np.savez(file_path_loss, arr = np.array(global_loss_lst))
 
-            # print(f"pers category accuracy: {sum(persAccList)/len(persAccList)}")
-
             
 
     def evaluate(self, model, val_dataloader, criterion):
@@ -225,7 +172,6 @@ class runModel:
                 
             lossLst = []
             accLst = []
-            persAccList = []
 
             len_dataloader = len(val_dataloader)
             
@@ -316,7 +262,7 @@ class runModel:
         optimizer = optim.Adam(model.parameters(), lr = self.lr, weight_decay = self.weight_decay)
         scheduler = CosineAnnealingLR(optimizer, T_max=self.num_epochs)
 
-        criterion = Loss(model_type = self.modelType)
+        criterion = nn.MSELoss()
 
         train_dataloader = np.load(self.data_folder + "train_data.npz")['arr']
         
@@ -334,8 +280,6 @@ class runModel:
             model.adversary = nn.Identity()
 
         self.getEvalData(self.data_folder)
-
-        criterion = Loss(model_type = self.modelType)
 
         val_dataloader = np.load(self.data_folder + "val_data.npz")['arr']
 
@@ -483,7 +427,6 @@ class runModel:
 
         # load in classes
         dataProcessor = DataProcessor(self.mainDir)
-        pp5vals = pp5()
 
         foodData = dataProcessor.loadData(samples, "food")
         glucoseData = dataProcessor.loadData(samples, "dexcom")
