@@ -45,14 +45,18 @@ class runModel:
         self.domain_lambda = 0.01
         self.train_batch_size = 32
         self.val_batch_size = 32
-        self.num_features = 5
+        self.num_features = 11
         self.num_features = self.num_features - 1 if self.no_gluc else self.num_features
         self.lr = 1e-3
         self.weight_decay = 1e-8
 
         # normalization
-        self.train_mean = 0
-        self.train_std = 0
+        samples = [str(i).zfill(3) for i in range(1, 17)]
+        dataProcessor = DataProcessor(samples, self.mainDir)
+        glucoseData = dataProcessor.loadData(samples, "dexcom")
+        self.train_mean = glucoseData['mean']
+        self.train_std = glucoseData['std']
+        print(self.train_mean, self.train_std)
         self.eps = 1e-12
 
         # lstm parameters 
@@ -65,9 +69,20 @@ class runModel:
 
         # direction
         self.checkpoint_folder = "saved_models/"
+        self.check_dir(self.checkpoint_folder)
         self.data_folder = "data/"
+        self.check_dir(self.data_folder)
         self.model_folder = "model_arch/"
+        self.check_dir(self.model_folder)
         self.performance_folder = "performance/"
+        self.check_dir(self.performance_folder)
+
+    def check_dir(self, folder_path):
+        if not os.path.exists(folder_path):
+            os.makedirs(folder_path)
+            print(f"Directory '{folder_path}' created.")
+        else:
+            print(f"Directory '{folder_path}' already exists.")
 
     def modelChooser(self, modelType, samples):
         if modelType == "conv1d":
@@ -228,7 +243,6 @@ class runModel:
         valSamples = samples[-5:]
 
         model = self.modelChooser(self.modelType, samples)
-
         self.getTrainData(self.data_folder)
 
         optimizer = optim.Adam(model.parameters(), lr = self.lr, weight_decay = self.weight_decay)
@@ -264,26 +278,26 @@ class runModel:
         file_name = "train_data.npz"
         file_path = save_dir + file_name
 
-        # load in classes
-        dataProcessor = DataProcessor(samples, mainDir = self.mainDir)
-
-        foodData = dataProcessor.loadData(samples, "food")
-        glucoseData = dataProcessor.loadData(samples, "dexcom")
-        edaData = dataProcessor.loadData(samples, "eda")
-        tempData = dataProcessor.loadData(samples, "temp")
-        hrData = dataProcessor.loadData(samples, "hr")
-        accData = dataProcessor.loadData(samples, "acc")
-        hba1c = dataProcessor.hba1c(samples)
-        minData = dataProcessor.minFromMidnight(samples)
-
-        self.train_mean = glucoseData['mean']
-        self.train_std = glucoseData['std']
-
         if os.path.exists(file_path):
             print("Train Data Found!")
             return
         else:
             print("Creating Train Data File")
+
+        # load in classes
+        dataProcessor = DataProcessor(trainSamples, mainDir = self.mainDir)
+
+        foodData = dataProcessor.loadData(trainSamples, "food")
+        glucoseData = dataProcessor.loadData(trainSamples, "dexcom")
+        edaData = dataProcessor.loadData(trainSamples, "eda")
+        tempData = dataProcessor.loadData(trainSamples, "temp")
+        hrData = dataProcessor.loadData(trainSamples, "hr")
+        accData = dataProcessor.loadData(trainSamples, "acc")
+        hba1c = dataProcessor.hba1c(trainSamples)
+        minData = dataProcessor.minFromMidnight(trainSamples)
+
+        self.train_mean = glucoseData['mean']
+        self.train_std = glucoseData['std']
 
         # sugarTensor, carbTensor, minTensor, hba1cTensor, edaTensor, hrTensor, tempTensor, accTensor, glucPastTensor, glucTensor
         # means
@@ -362,16 +376,16 @@ class runModel:
             print("Creating Val Data File")
 
         # load in classes
-        dataProcessor = DataProcessor(samples, mainDir = self.mainDir)
+        dataProcessor = DataProcessor(valSamples, mainDir = self.mainDir)
 
-        foodData = dataProcessor.loadData(samples, "food")
-        glucoseData = dataProcessor.loadData(samples, "dexcom")
-        edaData = dataProcessor.loadData(samples, "eda")
-        tempData = dataProcessor.loadData(samples, "temp")
-        hrData = dataProcessor.loadData(samples, "hr")
-        accData = dataProcessor.loadData(samples, "acc")
-        hba1c = dataProcessor.hba1c(samples)
-        minData = dataProcessor.minFromMidnight(samples)
+        foodData = dataProcessor.loadData(valSamples, "food")
+        glucoseData = dataProcessor.loadData(valSamples, "dexcom")
+        edaData = dataProcessor.loadData(valSamples, "eda")
+        tempData = dataProcessor.loadData(valSamples, "temp")
+        hrData = dataProcessor.loadData(valSamples, "hr")
+        accData = dataProcessor.loadData(valSamples, "acc")
+        hba1c = dataProcessor.hba1c(valSamples)
+        minData = dataProcessor.minFromMidnight(valSamples)
 
        # sugarTensor, carbTensor, minTensor, hba1cTensor, edaTensor, hrTensor, tempTensor, accTensor, glucPastTensor, glucTensor
         # means
