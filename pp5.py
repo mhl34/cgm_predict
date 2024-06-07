@@ -1,4 +1,4 @@
-# points per 5 minutes
+# points per 1 point of glucose data (sampled at 1/300 Hz)
 class pp5:
     def __init__(self):
         self.eda = 1200

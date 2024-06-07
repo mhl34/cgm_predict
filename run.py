@@ -490,7 +490,7 @@ class runModel:
 
         progress_bar = tqdm(enumerate(val_dataloader), total=len(val_dataloader), unit='batch')
 
-        for batch_idx, data in progress_bar:
+        for _, data in progress_bar:
             # stack the inputs and feed as 3 channel input
             if data.shape[0] < self.train_batch_size:
                 continue
@@ -513,12 +513,6 @@ class runModel:
             output = model(input).to(self.dtype).squeeze()
         elif self.modelType == "transformer":
             output = model(target, input).to(self.dtype).squeeze()
-        # elif self.modelType == "dann":
-        #     modelOut = model(input, alpha)
-        #     dann_output, output = modelOut[0].to(self.dtype), modelOut[1].to(self.dtype).squeeze()
-        else:
-            modelOut = model(input)
-            mask_output, output = modelOut[0].to(self.dtype), modelOut[1].to(self.dtype).squeeze()
         
         # graph = make_dot(output, params = dict(model.named_parameters()))
 
@@ -713,10 +707,6 @@ class runModel:
         plt.legend()
         plt.tight_layout()
         plt.savefig('plots/loss_plot_no_gluc.png')
-
-
-        
-
 
 if __name__ == "__main__":
     mainDir = "/media/nvme1/expansion/glycemic_health_data/physionet.org/files/big-ideas-glycemic-wearable/1.1.2/"

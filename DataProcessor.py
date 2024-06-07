@@ -4,6 +4,8 @@ from datetime import datetime, timedelta
 from utils import dateParser
 import matplotlib.pyplot as plt
 import seaborn as sns
+from scipy import signal
+import pp5
 
 sns.set_theme()
 
@@ -35,27 +37,38 @@ class DataProcessor:
                 df = pd.read_csv(self.mainDir + sample + "/" + self.tempFormat.format(sample))
                 lst = pd.to_numeric(df[' temp']).to_numpy()
                 lst = lst.astype(np.int64)
-                # lst = lst[~np.isnan(lst)]
-                data[sample] = lst
+                # downsample for alignment with glucose data (based on pp5)
+                factor_temp = pp5.temp
+                downsampled_temp = signal.decimate(lst, factor_temp, zero_phase=True)
+                data[sample] = downsampled_temp
         elif fileType == "eda":
             for sample in samples:
                 df = pd.read_csv(self.mainDir + sample + "/" + self.edaFormat.format(sample))
                 lst = pd.to_numeric(df[' eda']).to_numpy()
-                # lst = lst[~np.isnan(lst)]
-                data[sample] = lst
+                # downsample for alignment with glucose data (based on pp5)
+                factor_eda = pp5.eda
+                downsampled_eda = signal.decimate(lst, factor_eda, zero_phase=True)
+                data[sample] = downsampled_eda
         elif fileType == "hr":
             for sample in samples:
                 df = pd.read_csv(self.mainDir + sample + "/" + self.hrFormat.format(sample))
                 lst = pd.to_numeric(df[' hr']).to_numpy()
-                # lst = lst[~np.isnan(lst)]
-                data[sample] = lst
+                # downsample for alignment with glucose data (based on pp5)
+                factor_hr = pp5.hr
+                downsampled_hr = signal.decimate(lst, factor_hr, zero_phase=True)
+                data[sample] = downsampled_hr
         elif fileType == "acc":
             for sample in samples:
                 df = pd.read_csv(self.mainDir + sample + "/" + self.accFormat.format(sample))
                 lst_x = pd.to_numeric(df[' acc_x']).to_numpy()
                 lst_y = pd.to_numeric(df[' acc_y']).to_numpy()
                 lst_z = pd.to_numeric(df[' acc_z']).to_numpy()
-                data[sample] = np.sqrt(np.sum([np.square(lst_x), np.square(lst_y), np.square(lst_z)], axis=0))
+                # downsample for alignment with glucose data (based on pp5)
+                factor_acc = pp5.ac
+                downsampled_acc_x = signal.decimate(lst_x, factor_hr, zero_phase=True)
+                downsampled_acc_y = signal.decimate(lst_y, factor_hr, zero_phase=True)
+                downsampled_acc_z = signal.decimate(lst_z, factor_hr, zero_phase=True)
+                data[sample] = (downsampled_acc_x, downsampled_acc_y, downsampled_acc_z)
         elif fileType == "food":
             column_names = ["date", "time", "time_begin", "time_end", "logged_food", "amount", "unit", "searched_food", "calorie", "total_carb", "dietary_fiber", "sugar", "protein", "total_fat"]
             for sample in samples:
@@ -63,11 +76,10 @@ class DataProcessor:
                 dexcom_df = pd.read_csv(self.mainDir + sample + "/" + self.dexcomFormat.format(sample))
                 data[sample] = self.processFood(food_df, dexcom_df)
 
-                # plot for sanity check
-                plt.clf()
-                plt.plot(np.arange(len(data[sample][0])), data[sample][0])
-                plt.plot(np.arange(len(data[sample][1])), data[sample][1])
-                plt.savefig(f"plots/{sample}_food_log.png")
+                # plt.clf()
+                # plt.plot(np.arange(len(data[sample][0])), data[sample][0])
+                # plt.plot(np.arange(len(data[sample][1])), data[sample][1])
+                # plt.savefig(f"plots/{sample}_food_log.png")
         else:
             for sample in samples:
                 data[sample] = np.array([])

@@ -31,10 +31,10 @@ class FeatureDataset(Dataset):
         # get the different samples
         glucoseSample = self.glucose[sample]
         sugarSample, carbSample = self.food[sample]
-        # edaSample = self.eda[sample]
-        # hrSample = self.hr[sample]
-        # tempSample = self.temp[sample]
-        # accSample = self.acc[sample]
+        edaSample = self.eda[sample]
+        hrSample = self.hr[sample]
+        tempSample = self.temp[sample]
+        accSample = self.acc[sample]
         minSample = self.minutes[sample]
         hba1cSample = self.hba1c[sample]
 
