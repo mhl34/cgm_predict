@@ -165,7 +165,6 @@ class runModel:
             
 
     def evaluate(self, model, val_dataloader, criterion):
-        
         with torch.no_grad():
             epoch = 1
             progress_bar = tqdm(enumerate(val_dataloader), total=len(val_dataloader), desc=f'Epoch {epoch + 1}/{self.num_epochs}', unit='batch')
@@ -173,11 +172,7 @@ class runModel:
             lossLst = []
             accLst = []
 
-            len_dataloader = len(val_dataloader)
-            
-            # sample, edaMean, hrMean, tempMean, accMean, glucPastMean, glucMean
-
-            for batch_idx, data in progress_bar:
+            for _, data in progress_bar:
                 data = torch.Tensor(data).to(self.dtype)
                 # stack the inputs and feed as 3 channel input
                 data = data.squeeze(2)
@@ -187,21 +182,11 @@ class runModel:
                     input = data[:, :-1, :].to(self.dtype)
 
                 target = data[:, -1, :]
-
-                # alpha value for dann model
-                p = float(batch_idx + epoch * len_dataloader) / (self.num_epochs * len_dataloader)
-                alpha = 2. / (1. + np.exp(-10 * p)) - 1
                 
                 if self.modelType == "conv1d" or self.modelType == "lstm" or self.modelType == "unet":
                     output = model(input).to(self.dtype).squeeze()
                 elif self.modelType == "transformer":
                     output = model(target, input).to(self.dtype).squeeze()
-                # elif self.modelType == "dann":
-                #     modelOut = model(input, alpha)
-                #     dann_output, output = modelOut[0].to(self.dtype), modelOut[1].to(self.dtype).squeeze()
-                else:
-                    modelOut = model(input)
-                    mask_output, output = modelOut[0].to(self.dtype), modelOut[1].to(self.dtype).squeeze()
                 
                 # loss is only calculated from the main task
                 loss = criterion(output, target)
@@ -210,13 +195,10 @@ class runModel:
                 output_arr = ((output * self.train_std) + self.train_mean)
                 target_arr = ((target * self.train_std) + self.train_mean)
                 accLst.append(1 - self.mape(output_arr, target_arr))
-                # persAccList.append(self.persAcc(output, glucStats))
 
             print(f"val loss: {sum(lossLst)/len(lossLst)} val accuracy: {sum(accLst)/len(accLst)}")
 
-            # print(f"pers category accuracy: {sum(persAccList)/len(persAccList)}")
-
-            # example output with the epoch
+            # create example output plot with the epoch
             plt.clf()
             plt.grid(True)
             plt.figure(figsize=(8, 6))
@@ -237,18 +219,10 @@ class runModel:
             if self.no_gluc:
                 plt.savefig(f'plots/{self.modelType}_output_no_gluc.png')
             else:
-                plt.savefig(f'plots/{self.modelType}_output.png')
-
-            # example output with the epoch
-            # for outVal, targetVal in zip(output[-1], target[-1]):
-            #     print(f"output: {(outVal.item() * self.train_std) + self.train_mean}, target: {(targetVal.item() * self.train_std) + self.train_mean}, difference: {(outVal.item() - targetVal.item() * self.train_std) + self.train_mean}")
-             
+                plt.savefig(f'plots/{self.modelType}_output.png')            
 
     def mape(self, pred, target):
         return (torch.mean(torch.div(torch.abs(target - pred), torch.abs(target)))).item()
-
-    # def persAcc(self, pred, glucStats):
-    #     return torch.mean((torch.abs(pred - glucStats["mean"]) < glucStats["std"]).to(torch.float64)).item()
 
     def run(self):
         samples = [str(i).zfill(3) for i in range(1, 17)]
