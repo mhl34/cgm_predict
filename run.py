@@ -45,7 +45,7 @@ class runModel:
         self.domain_lambda = 0.01
         self.train_batch_size = 32
         self.val_batch_size = 32
-        self.num_features = 11
+        self.num_features = 11 if not self.no_gluc else 10
         self.num_features = self.num_features - 1 if self.no_gluc else self.num_features
         self.lr = 1e-3
         self.weight_decay = 1e-8
