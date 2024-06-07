@@ -1,8 +1,9 @@
 # Ignore directories
-/data/
-/saved_models/
-/model_arch/
-/performance/
+data/
+plots/
+saved_models/
+model_arch/
+performance/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

@@ -64,10 +64,10 @@ class runModel:
         self.num_head = 128
 
         # direction
-        self.checkpoint_folder = "/home/mhl34/HbA1c-and-Glucose-Variability/feature_select_regress/saved_models/"
-        self.data_folder = "/home/mhl34/HbA1c-and-Glucose-Variability/feature_select_regress/data/"
-        self.model_folder = "/home/mhl34/HbA1c-and-Glucose-Variability/feature_select_regress/model_arch/"
-        self.performance_folder = "/home/mhl34/HbA1c-and-Glucose-Variability/feature_select_regress/performance/"
+        self.checkpoint_folder = "saved_models/"
+        self.data_folder = "data/"
+        self.model_folder = "model_arch/"
+        self.performance_folder = "performance/"
 
     def modelChooser(self, modelType, samples):
         if modelType == "conv1d":
@@ -722,7 +722,4 @@ if __name__ == "__main__":
     mainDir = "/media/nvme1/expansion/glycemic_health_data/physionet.org/files/big-ideas-glycemic-wearable/1.1.2/"
     # mainDir = "/Users/matthewlee/Matthew/Work/DunnLab/big-ideas-lab-glycemic-variability-and-wearable-device-data-1.1.0/"
     obj = runModel(mainDir)
-    # obj.plot_model()
-    # obj.plot_output()
-    # obj.run()
-    obj.plot_performance()
+    obj.run()
