@@ -15,8 +15,6 @@ import seaborn as sns
 from models.Conv1DModel import Conv1DModel
 from models.LstmModel import LstmModel
 from models.TransformerModel import TransformerModel
-from models.DannModel import DannModel
-from models.SslModel import SslModel
 from models.UNet import UNet
 
 sns.set_theme()
