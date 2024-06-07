@@ -1,6 +1,6 @@
 from torch.utils.data import Dataset
 import random
-from pp5 import pp5
+from pp5 import pp5_vals
 import numpy as np
 import torch
 from utils import createGlucStats
@@ -17,7 +17,7 @@ class FeatureDataset(Dataset):
         self.minutes = minutes
         self.hba1c = hba1c
         self.seq_length = seq_length
-        self.pp5vals = pp5()
+        self.pp5vals = pp5_vals()
         self.metric = metric
         self.dtype = dtype
         self.transforms = transforms
@@ -34,56 +34,80 @@ class FeatureDataset(Dataset):
         edaSample = self.eda[sample]
         hrSample = self.hr[sample]
         tempSample = self.temp[sample]
-        accSample = self.acc[sample]
+        acc_xSample, acc_ySample, acc_zSample = self.acc[sample]
         minSample = self.minutes[sample]
         hba1cSample = self.hba1c[sample]
+        
+        # print("Length of samples:")
+        # print(f"Glucose Sample: {len(glucoseSample)}")
+        # print(f"Sugar Sample: {len(sugarSample)}")
+        # print(f"Carb Sample: {len(carbSample)}")
+        # print(f"EDA Sample: {len(edaSample)}")
+        # print(f"HR Sample: {len(hrSample)}")
+        # print(f"Temp Sample: {len(tempSample)}")
+        # print(f"ACC Sample: {len(acc_xSample)}")
+        # print(f"Minutes Sample: {len(minSample)}")
+        # print(f"HbA1c Sample: {len(hba1cSample)}")
 
-        # sugar, carb, min, glucose, and hba1c (constant) are sampled at the same rate
-        # acc needs a factor
+        idx = index
         
-        # get the start indices for different sequences
-        glucStart = sugarStart = carbStart = minStart = hba1cStart = index
-        # accStart = glucStart * self.pp5vals.acc
-        
-        glucTruth = self.truthCheck(glucoseSample, glucStart, "glucose")
-        sugarTruth = self.truthCheck(sugarSample, glucStart, "gluc_other")
-        carbTruth = self.truthCheck(carbSample, carbStart, "gluc_other")
-        minTruth = self.truthCheck(minSample, minStart, "gluc_other")
-        hba1cTruth = self.truthCheck(hba1cSample, hba1cStart, "gluc_other")
-        # accTruth = self.truthCheck(accSample, accStart, "acc")
+        glucTruth = self.truthCheck(glucoseSample, idx, "glucose")
+        sugarTruth = self.truthCheck(sugarSample, idx, "gluc_other")
+        carbTruth = self.truthCheck(carbSample, idx, "gluc_other")
+        minTruth = self.truthCheck(minSample, idx, "gluc_other")
+        hba1cTruth = self.truthCheck(hba1cSample, idx, "gluc_other")
+        edaTruth = self.truthCheck(edaSample, idx, "eda")
+        hrTruth = self.truthCheck(hrSample, idx, "hr")
+        tempTruth = self.truthCheck(tempSample, idx, "temp")
+        acc_xTruth = self.truthCheck(acc_xSample, idx, "acc")
+        acc_yTruth = self.truthCheck(acc_ySample, idx, "acc")
+        acc_zTruth = self.truthCheck(acc_zSample, idx, "acc")
         
         # while glucTruth or sugarTruth or carbTruth or minTruth or hba1cTruth or accTruth:
-        while glucTruth or sugarTruth or carbTruth or minTruth or hba1cTruth:
+        while glucTruth or sugarTruth or carbTruth or minTruth or hba1cTruth or edaTruth or hrTruth or tempTruth or acc_xTruth or acc_yTruth or acc_zTruth:
             idx = random.randint(0,len(glucoseSample) - 2 * self.seq_length - 1)
-            glucStart = sugarStart = carbStart = minStart = hba1cStart = idx
-            accStart = glucStart * self.pp5vals.acc
-            glucTruth = self.truthCheck(glucoseSample, glucStart, "glucose")
-            sugarTruth = self.truthCheck(sugarSample, glucStart, "gluc_other")
-            carbTruth = self.truthCheck(carbSample, carbStart, "gluc_other")
-            minTruth = self.truthCheck(minSample, minStart, "gluc_other")
-            hba1cTruth = self.truthCheck(hba1cSample, hba1cStart, "gluc_other")
-            # accTruth = self.truthCheck(accSample, accStart, "acc")
+            glucTruth = self.truthCheck(glucoseSample, idx, "glucose")
+            sugarTruth = self.truthCheck(sugarSample, idx, "gluc_other")
+            carbTruth = self.truthCheck(carbSample, idx, "gluc_other")
+            minTruth = self.truthCheck(minSample, idx, "gluc_other")
+            hba1cTruth = self.truthCheck(hba1cSample, idx, "gluc_other")
+            edaTruth = self.truthCheck(edaSample, idx, "eda")
+            hrTruth = self.truthCheck(hrSample, idx, "hr")
+            tempTruth = self.truthCheck(tempSample, idx, "temp")
+            acc_xTruth = self.truthCheck(acc_xSample, idx, "acc")
+            acc_yTruth = self.truthCheck(acc_ySample, idx, "acc")
+            acc_zTruth = self.truthCheck(acc_zSample, idx, "acc")
             
-        glucosePastSec = glucoseSample[glucStart: glucStart + self.seq_length]
-        glucoseSec = glucoseSample[glucStart + self.seq_length + 1: glucStart + 2 * self.seq_length + 1]
-        sugarSec = sugarSample[sugarStart: sugarStart + self.seq_length]
-        carbSec = carbSample[carbStart: carbStart + self.seq_length]
-        minSec = minSample[minStart: minStart + self.seq_length]
-        hba1cSec = hba1cSample[hba1cStart: hba1cStart + self.seq_length]
-        # accSec = accSample[accStart: accStart + self.seq_length * self.pp5vals.acc]
-        # glucStats = createGlucStats(glucoseSec)
+        glucosePastSec = glucoseSample[idx: idx + self.seq_length]
+        glucoseSec = glucoseSample[idx + self.seq_length + 1: idx + 2 * self.seq_length + 1]
+        sugarSec = sugarSample[idx: idx + self.seq_length]
+        carbSec = carbSample[idx: idx + self.seq_length]
+        minSec = minSample[idx: idx + self.seq_length]
+        hba1cSec = hba1cSample[idx: idx + self.seq_length]
+        edaSec = edaSample[idx: idx + self.seq_length]
+        hrSec = hrSample[idx: idx + self.seq_length]
+        tempSec = tempSample[idx: idx + self.seq_length]
+        acc_xSec = acc_xSample[idx: idx + self.seq_length]
+        acc_ySec = acc_ySample[idx: idx + self.seq_length]
+        acc_zSec = acc_zSample[idx: idx + self.seq_length]
         
         # create averages across sequence length
         # accMean = np.array(list(map(np.mean, np.array_split(accSec, self.seq_length))))
-        sugarMean = torch.Tensor(np.array(list(map(np.mean, np.array_split(sugarSec, self.seq_length)))))
-        carbMean = torch.Tensor(np.array(list(map(np.mean, np.array_split(carbSec, self.seq_length)))))
-        minMean = torch.Tensor(np.array(list(map(np.mean, np.array_split(minSec, self.seq_length)))))
-        hba1cMean = torch.Tensor(np.array(list(map(np.mean, np.array_split(hba1cSec, self.seq_length)))))
-        glucPastMean = torch.Tensor(np.array(list(map(np.mean, np.array_split(glucosePastSec, self.seq_length)))))
-        glucMean = torch.Tensor(np.array(list(map(np.mean, np.array_split(glucoseSec, self.seq_length)))))
+        sugarTensor = torch.Tensor(np.array(sugarSec))
+        carbTensor = torch.Tensor(np.array(carbSec))
+        minTensor = torch.Tensor(np.array(minSec))
+        hba1cTensor = torch.Tensor(np.array(hba1cSec))
+        glucPastTensor = torch.Tensor(np.array(glucosePastSec))
+        glucTensor = torch.Tensor(np.array(glucoseSec))
+        edaTensor = torch.Tensor(np.array(edaSec))
+        hrTensor = torch.Tensor(np.array(hrSec))
+        tempTensor = torch.Tensor(np.array(tempSec))
+        acc_xTensor = torch.Tensor(np.array(acc_xSec))
+        acc_yTensor = torch.Tensor(np.array(acc_ySec))
+        acc_zTensor = torch.Tensor(np.array(acc_zSec))
 
         # normalize if needed
-        output = torch.stack((sugarMean, carbMean, minMean, hba1cMean, glucPastMean, glucMean)).unsqueeze(1)
+        output = torch.stack((sugarTensor, carbTensor, minTensor, hba1cTensor, edaTensor, hrTensor, tempTensor, acc_xTensor, acc_yTensor, acc_zTensor, glucPastTensor, glucTensor)).unsqueeze(1)
         if self.transforms != None:
             # return (sample, self.normalizeFn(accMean), self.normalizeFn(sugarMean), self.normalizeFn(carbMean), self.normalizeFn(minMean), self.normalizeFn(hba1cMean), self.normalizeFn(glucPastMean), self.normalizeFn(glucMean))
             output = self.transforms(output)
@@ -92,15 +116,7 @@ class FeatureDataset(Dataset):
         # return (sample, accMean, sugarMean, carbMean, minMean, hba1cMean, glucPastMean, glucMean)
         return output.to(self.dtype)
     
-    def normalizeFn(self, data, eps = 1e-5):
-        data = data[~np.isnan(data)]
-        data_min = np.min(data)
-        data_max = np.max(data)
-        scaled_data = (data - data_min) / (data_max - data_min + eps)
-        return scaled_data
-    
     def truthCheck(self, sample_array, sample_start, sample_type):
         if sample_type == "glucose":
             return True in np.isnan(sample_array[sample_start: sample_start + 2 * self.seq_length + 1]) or len(sample_array[sample_start: sample_start  + 2 * self.seq_length + 1]) != 2 * self.seq_length + 1
-        pp5val_dict = {"eda": self.pp5vals.eda, "hr": self.pp5vals.hr, "temp": self.pp5vals.temp, "acc": self.pp5vals.acc, "gluc_other": 1}
-        return True in np.isnan(sample_array[sample_start: sample_start + pp5val_dict[sample_type] * self.seq_length + 1]) or len(sample_array[sample_start: sample_start + pp5val_dict[sample_type] * self.seq_length + 1]) != pp5val_dict[sample_type] * self.seq_length + 1
+        return True in np.isnan(sample_array[sample_start: sample_start + self.seq_length + 1]) or len(sample_array[sample_start: sample_start + self.seq_length + 1]) != self.seq_length + 1

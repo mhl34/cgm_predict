@@ -2,15 +2,14 @@ import pandas as pd
 import numpy as np
 from datetime import datetime, timedelta
 from utils import dateParser
-import matplotlib.pyplot as plt
 import seaborn as sns
 from scipy import signal
-import pp5
+from pp5 import pp5_vals
 
 sns.set_theme()
 
 class DataProcessor:
-    def __init__(self, mainDir = ""):
+    def __init__(self, samples, mainDir = ""):
         self.dexcomFormat = "Dexcom_{0}.csv"
         self.accFormat = "ACC_{0}.csv"
         self.foodLogFormat = "Food_Log_{0}.csv"
@@ -20,69 +19,112 @@ class DataProcessor:
         self.hrFormat = "HR_{0}.csv"
         self.tempFormat = "TEMP_{0}.csv"
         self.mainDir = mainDir
+        self.seq_len_dict = self.get_seq_lens(samples)
 
         # method parameters
         self.food_time = 6
       
     def loadData(self, samples, fileType):
         data = {}
+        pp5 = pp5_vals()
         if fileType == "dexcom":
+            mean = 0
+            std = 0
             for sample in samples:
                 df = pd.read_csv(self.mainDir + sample + "/" + self.dexcomFormat.format(sample))
                 lst = pd.to_numeric(df['Glucose Value (mg/dL)']).to_numpy()
-                # lst = lst[~np.isnan(lst)]
+                mean += np.nanmean(lst)
+                std += np.nanstd(lst)
                 data[sample] = lst
+            data['mean'] = mean / len(samples)
+            data['std'] = std / len(samples)
         elif fileType == "temp":
+            mean = 0
+            std = 0
             for sample in samples:
                 df = pd.read_csv(self.mainDir + sample + "/" + self.tempFormat.format(sample))
                 lst = pd.to_numeric(df[' temp']).to_numpy()
                 lst = lst.astype(np.int64)
                 # downsample for alignment with glucose data (based on pp5)
-                factor_temp = pp5.temp
-                downsampled_temp = signal.decimate(lst, factor_temp, zero_phase=True)
+                downsampled_temp = signal.resample(lst, self.seq_len_dict[sample])
+                mean += np.nanmean(downsampled_temp)
+                std += np.nanstd(downsampled_temp)
                 data[sample] = downsampled_temp
         elif fileType == "eda":
+            mean = 0
+            std = 0
             for sample in samples:
                 df = pd.read_csv(self.mainDir + sample + "/" + self.edaFormat.format(sample))
                 lst = pd.to_numeric(df[' eda']).to_numpy()
                 # downsample for alignment with glucose data (based on pp5)
-                factor_eda = pp5.eda
-                downsampled_eda = signal.decimate(lst, factor_eda, zero_phase=True)
+                downsampled_eda = signal.resample(lst, self.seq_len_dict[sample])
+                mean += np.nanmean(downsampled_eda)
+                std += np.nanstd(downsampled_eda)
                 data[sample] = downsampled_eda
         elif fileType == "hr":
+            mean = 0
+            std = 0
             for sample in samples:
                 df = pd.read_csv(self.mainDir + sample + "/" + self.hrFormat.format(sample))
                 lst = pd.to_numeric(df[' hr']).to_numpy()
                 # downsample for alignment with glucose data (based on pp5)
-                factor_hr = pp5.hr
-                downsampled_hr = signal.decimate(lst, factor_hr, zero_phase=True)
+                downsampled_hr = signal.resample(lst, self.seq_len_dict[sample])
+                mean += np.nanmean(downsampled_hr)
+                std += np.nanstd(downsampled_hr)
                 data[sample] = downsampled_hr
         elif fileType == "acc":
+            mean_x = 0
+            mean_y = 0
+            mean_z= 0
+            std_x = 0
+            std_y = 0
+            std_z = 0
             for sample in samples:
                 df = pd.read_csv(self.mainDir + sample + "/" + self.accFormat.format(sample))
                 lst_x = pd.to_numeric(df[' acc_x']).to_numpy()
                 lst_y = pd.to_numeric(df[' acc_y']).to_numpy()
                 lst_z = pd.to_numeric(df[' acc_z']).to_numpy()
                 # downsample for alignment with glucose data (based on pp5)
-                factor_acc = pp5.ac
-                downsampled_acc_x = signal.decimate(lst_x, factor_hr, zero_phase=True)
-                downsampled_acc_y = signal.decimate(lst_y, factor_hr, zero_phase=True)
-                downsampled_acc_z = signal.decimate(lst_z, factor_hr, zero_phase=True)
+                downsampled_acc_x = signal.resample(lst_x, self.seq_len_dict[sample])
+                downsampled_acc_y = signal.resample(lst_y, self.seq_len_dict[sample])
+                downsampled_acc_z = signal.resample(lst_z, self.seq_len_dict[sample])
+                mean_x += np.nanmean(downsampled_acc_x)
+                mean_y += np.nanmean(downsampled_acc_y)
+                mean_z += np.nanmean(downsampled_acc_z)
+                std_x += np.nanstd(downsampled_acc_x)
+                std_y += np.nanstd(downsampled_acc_y)
+                std_z += np.nanstd(downsampled_acc_z)
                 data[sample] = (downsampled_acc_x, downsampled_acc_y, downsampled_acc_z)
+            data['mean_x'] = mean_x / len(samples)
+            data['mean_y'] = mean_y / len(samples)
+            data['mean_z'] = mean_z / len(samples)
+            data['std_x'] = std_x / len(samples)
+            data['std_y'] = std_y / len(samples)
+            data['std_z'] = std_z / len(samples)
         elif fileType == "food":
             column_names = ["date", "time", "time_begin", "time_end", "logged_food", "amount", "unit", "searched_food", "calorie", "total_carb", "dietary_fiber", "sugar", "protein", "total_fat"]
+            mean_sugar = 0
+            mean_carb = 0
+            std_sugar = 0
+            std_carb = 0
             for sample in samples:
                 food_df = pd.read_csv(self.mainDir + sample + "/" + self.foodLogFormat.format(sample), sep =',', names = column_names)
                 dexcom_df = pd.read_csv(self.mainDir + sample + "/" + self.dexcomFormat.format(sample))
-                data[sample] = self.processFood(food_df, dexcom_df)
-
-                # plt.clf()
-                # plt.plot(np.arange(len(data[sample][0])), data[sample][0])
-                # plt.plot(np.arange(len(data[sample][1])), data[sample][1])
-                # plt.savefig(f"plots/{sample}_food_log.png")
+                ms, mc, ss, sc, data[sample] = self.processFood(food_df, dexcom_df)
+                mean_sugar += ms
+                mean_carb += mc
+                std_sugar += ss
+                std_carb += sc
+            data['mean_sugar'] = mean_sugar / len(samples)
+            data['mean_carb'] = mean_carb / len(samples)
+            data['std_sugar'] = std_sugar / len(samples)
+            data['std_carb'] = std_carb / len(samples)
         else:
             for sample in samples:
                 data[sample] = np.array([])
+        if fileType != "dexcom" and fileType != "food" and fileType != "acc":
+            data['mean'] = mean / len(samples)
+            data['std'] = std / len(samples)
         return data
     
     def persComp(self, value, persHigh, persLow):
@@ -143,7 +185,7 @@ class DataProcessor:
                 gluc_idx += 1
                 food_idx = 0
                 continue
-        return (sugar_np_array, carb_np_array)
+        return np.nanmean(sugar_np_array), np.nanmean(carb_np_array), np.nanstd(sugar_np_array), np.nanstd(carb_np_array), (sugar_np_array, carb_np_array)
     
     def hba1c(self, samples):
         d = {}
@@ -154,15 +196,23 @@ class DataProcessor:
             dexcom_df = pd.read_csv(self.mainDir + sample + "/" + self.dexcomFormat.format(sample))
             size = len(dexcom_df)
             d[sample] = np.ones(size) * hba1c
+        d['mean'] = hba1c
+        d['std'] = 0
         return d
 
     def minFromMidnight(self, samples):
         data = {}
+        mean = 0
+        std = 0
         for sample in samples:
             df = pd.read_csv(self.mainDir + sample + "/" + self.dexcomFormat.format(sample))
             time_array = np.array(list(map(dateParser, df['Timestamp (YYYY-MM-DDThh:mm:ss)'].to_numpy())))
             min_array = np.array(list(map(self.getMins, time_array)))
+            mean += np.nanmean(min_array)
+            std += np.nanstd(min_array)
             data[sample] = min_array
+        data['mean'] = mean / len(samples)
+        data['std'] = std / len(samples)
         return data
 
     def getMins(self, time):
@@ -170,3 +220,17 @@ class DataProcessor:
             return time.hour * 60 + time.minute + time.second / 60
         except:
             return np.nan
+
+    def downsample_with_nan(self, data, downsample_factor, zero_phase = True):
+        nan_indices = np.isnan(data)
+        data[nan_indices] = 0
+        downsampled_data = signal.decimate(data, downsample_factor, zero_phase = zero_phase)
+        return np.where(downsampled_data == 0, np.nan, downsampled_data)
+
+    def get_seq_lens(self, samples):
+        data = {}
+        for sample in samples:
+            df = pd.read_csv(self.mainDir + sample + "/" + self.dexcomFormat.format(sample))
+            lst = pd.to_numeric(df['Glucose Value (mg/dL)']).to_numpy()
+            data[sample] = len(lst)
+        return data
