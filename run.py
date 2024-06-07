@@ -45,14 +45,18 @@ class runModel:
         self.domain_lambda = 0.01
         self.train_batch_size = 32
         self.val_batch_size = 32
-        self.num_features = 5
+        self.num_features = 11 if not self.no_gluc else 10
         self.num_features = self.num_features - 1 if self.no_gluc else self.num_features
         self.lr = 1e-3
         self.weight_decay = 1e-8
 
         # normalization
-        self.train_mean = 0
-        self.train_std = 0
+        samples = [str(i).zfill(3) for i in range(1, 17)]
+        dataProcessor = DataProcessor(samples, self.mainDir)
+        glucoseData = dataProcessor.loadData(samples, "dexcom")
+        self.train_mean = glucoseData['mean']
+        self.train_std = glucoseData['std']
+        print(self.train_mean, self.train_std)
         self.eps = 1e-12
 
         # lstm parameters 
@@ -65,9 +69,20 @@ class runModel:
 
         # direction
         self.checkpoint_folder = "saved_models/"
+        self.check_dir(self.checkpoint_folder)
         self.data_folder = "data/"
+        self.check_dir(self.data_folder)
         self.model_folder = "model_arch/"
+        self.check_dir(self.model_folder)
         self.performance_folder = "performance/"
+        self.check_dir(self.performance_folder)
+
+    def check_dir(self, folder_path):
+        if not os.path.exists(folder_path):
+            os.makedirs(folder_path)
+            print(f"Directory '{folder_path}' created.")
+        else:
+            print(f"Directory '{folder_path}' already exists.")
 
     def modelChooser(self, modelType, samples):
         if modelType == "conv1d":
@@ -228,7 +243,6 @@ class runModel:
         valSamples = samples[-5:]
 
         model = self.modelChooser(self.modelType, samples)
-
         self.getTrainData(self.data_folder)
 
         optimizer = optim.Adam(model.parameters(), lr = self.lr, weight_decay = self.weight_decay)
@@ -264,89 +278,58 @@ class runModel:
         file_name = "train_data.npz"
         file_path = save_dir + file_name
 
-        # load in classes
-        dataProcessor = DataProcessor(self.mainDir)
-
-        foodData = dataProcessor.loadData(samples, "food")
-        glucoseData = dataProcessor.loadData(samples, "dexcom")
-        # edaData = dataProcessor.loadData(samples, "eda")
-        # tempData = dataProcessor.loadData(samples, "temp")
-        # hrData = dataProcessor.loadData(samples, "hr")
-        # accData = dataProcessor.loadData(samples, "acc")
-
-        hba1c = dataProcessor.hba1c(samples)
-
-        minData = dataProcessor.minFromMidnight(samples)
-
-        # acc_mean = 0
-        gluc_mean = 0
-        sugar_mean = 0
-        carb_mean = 0
-        min_mean = 0
-        hba1c_mean = 0
-
-        # acc_std = 0
-        gluc_std = 0
-        sugar_std = 0
-        carb_std = 0
-        min_std = 0
-        hba1c_std = 0
-
-        for sample in samples:
-            # accSample = accData[sample]
-            glucoseSample = glucoseData[sample]
-            sugarSample, carbSample = foodData[sample]
-            minSample = minData[sample]
-            hba1cSample = hba1c[sample]
-            # drop nan
-            
-            # accSample = accSample[~np.isnan(accSample)]
-            glucoseSample = glucoseSample[~np.isnan(glucoseSample)]
-            sugarSample = sugarSample[~np.isnan(sugarSample)]
-            carbSample = carbSample[~np.isnan(carbSample)]
-            minSample = minSample[~np.isnan(minSample)]
-            hba1cSample = hba1cSample[~np.isnan(hba1cSample)]
-            # means 
-            
-            # acc_mean += accSample.mean().item()
-            gluc_mean += glucoseSample.mean().item()
-            sugar_mean += sugarSample.mean().item()
-            carb_mean += carbSample.mean().item()
-            min_mean += minSample.mean().item()
-            hba1c_mean += hba1cSample.mean().item()
-            # stds
-            
-            # acc_std += accSample.std().item()
-            gluc_std += glucoseSample.std().item()
-            sugar_std += sugarSample.std().item()
-            carb_std += carbSample.std().item()
-            min_std += minSample.std().item()
-            hba1c_std += hba1cSample.std().item()
-        
-        # mean
-        gluc_mean /= len(samples)
-        sugar_mean /= len(samples)
-        carb_mean /= len(samples)
-        min_mean /= len(samples)
-        hba1c_mean /= len(samples)
-        # std
-        gluc_std /= len(samples)
-        sugar_std /= len(samples)
-        carb_std /= len(samples)
-        min_std /= len(samples)
-        hba1c_std /= len(samples)
-
-        self.train_mean = gluc_mean
-        self.train_std = gluc_std
-
         if os.path.exists(file_path):
             print("Train Data Found!")
             return
         else:
             print("Creating Train Data File")
 
-        mean_list = [sugar_mean, carb_mean, min_mean, hba1c_mean, gluc_mean, gluc_mean]
-        std_list = [sugar_std, carb_std, min_mean, hba1c_std, gluc_std, gluc_std]
+        # load in classes
+        dataProcessor = DataProcessor(trainSamples, mainDir = self.mainDir)
+
+        foodData = dataProcessor.loadData(trainSamples, "food")
+        glucoseData = dataProcessor.loadData(trainSamples, "dexcom")
+        edaData = dataProcessor.loadData(trainSamples, "eda")
+        tempData = dataProcessor.loadData(trainSamples, "temp")
+        hrData = dataProcessor.loadData(trainSamples, "hr")
+        accData = dataProcessor.loadData(trainSamples, "acc")
+        hba1c = dataProcessor.hba1c(trainSamples)
+        minData = dataProcessor.minFromMidnight(trainSamples)
+
+        self.train_mean = glucoseData['mean']
+        self.train_std = glucoseData['std']
+
+        # sugarTensor, carbTensor, minTensor, hba1cTensor, edaTensor, hrTensor, tempTensor, accTensor, glucPastTensor, glucTensor
+        # means
+        sugar_mean = foodData['mean_sugar']
+        carb_mean = foodData['mean_carb']
+        min_mean = minData['mean']
+        hba1c_mean = hba1c['mean']
+        eda_mean = edaData['mean']
+        hr_mean = hrData['mean']
+        temp_mean = tempData['mean']
+        acc_x_mean = accData['mean_x']
+        acc_y_mean = accData['mean_y']
+        acc_z_mean = accData['mean_z']
+        gluc_mean = glucoseData['mean']
+
+        # stds
+        sugar_std = foodData['std_sugar']
+        carb_std = foodData['std_carb']
+        min_std = minData['std']
+        hba1c_std = hba1c['std']
+        eda_std = edaData['std']
+        hr_std = hrData['std']
+        temp_std = tempData['std']
+        acc_x_std = accData['std_x']
+        acc_y_std = accData['std_y']
+        acc_z_std = accData['std_z']
+        gluc_std = glucoseData['std']
+
+        mean_list = [sugar_mean, carb_mean, min_mean, hba1c_mean, eda_mean, hr_mean, temp_mean, acc_x_mean, acc_y_mean, acc_z_mean, gluc_mean, gluc_mean]
+        std_list = [sugar_std, carb_std, min_std, hba1c_std, eda_std, hr_std, temp_std, acc_x_std, acc_y_std, acc_z_std, gluc_std, gluc_std]
+        print(mean_list)
+        print(std_list)
         std_list = [std + self.eps if std > self.eps else 1 for std in std_list]
 
         # Step 2: Define a custom transform to normalize the data
@@ -354,11 +337,6 @@ class runModel:
             # transforms.ToTensor(),  # Convert PIL image to Tensor
             transforms.Normalize(mean = mean_list, std = std_list)  # Normalize using mean and std
         ])
-
-        accData = None
-        edaData = None
-        hrData = None
-        tempData = None
 
         train_dataset = FeatureDataset(trainSamples, glucoseData, edaData, hrData, tempData, accData, foodData, minData, hba1c, metric = self.glucMetric, dtype = self.dtype, seq_length = self.seq_length, transforms = custom_transform)
         # returns eda, hr, temp, then hba1c
@@ -370,7 +348,7 @@ class runModel:
         data_list = []
 
         # for batch_idx, (sample, acc, sugar, carb, mins, hba1c, glucPast, glucPres) in progress_bar:
-        for batch_idx, data in progress_bar:
+        for _, data in progress_bar:
             # stack the inputs and feed as 3 channel input
             if data.shape[0] < self.train_batch_size:
                 continue
@@ -398,91 +376,52 @@ class runModel:
             print("Creating Val Data File")
 
         # load in classes
-        dataProcessor = DataProcessor(self.mainDir)
+        dataProcessor = DataProcessor(valSamples, mainDir = self.mainDir)
 
-        foodData = dataProcessor.loadData(samples, "food")
-        glucoseData = dataProcessor.loadData(samples, "dexcom")
-        # edaData = dataProcessor.loadData(samples, "eda")
-        # tempData = dataProcessor.loadData(samples, "temp")
-        # hrData = dataProcessor.loadData(samples, "hr")
-        # accData = dataProcessor.loadData(samples, "acc")
+        foodData = dataProcessor.loadData(valSamples, "food")
+        glucoseData = dataProcessor.loadData(valSamples, "dexcom")
+        edaData = dataProcessor.loadData(valSamples, "eda")
+        tempData = dataProcessor.loadData(valSamples, "temp")
+        hrData = dataProcessor.loadData(valSamples, "hr")
+        accData = dataProcessor.loadData(valSamples, "acc")
+        hba1c = dataProcessor.hba1c(valSamples)
+        minData = dataProcessor.minFromMidnight(valSamples)
 
-        hba1c = dataProcessor.hba1c(samples)
+       # sugarTensor, carbTensor, minTensor, hba1cTensor, edaTensor, hrTensor, tempTensor, accTensor, glucPastTensor, glucTensor
+        # means
+        sugar_mean = foodData['mean_sugar']
+        carb_mean = foodData['mean_carb']
+        min_mean = minData['mean']
+        hba1c_mean = hba1c['mean']
+        eda_mean = edaData['mean']
+        hr_mean = hrData['mean']
+        temp_mean = tempData['mean']
+        acc_x_mean = accData['mean_x']
+        acc_y_mean = accData['mean_y']
+        acc_z_mean = accData['mean_z']
+        gluc_mean = glucoseData['mean']
 
-        minData = dataProcessor.minFromMidnight(samples)
+        # stds
+        sugar_std = foodData['std_sugar']
+        carb_std = foodData['std_carb']
+        min_std = minData['std']
+        hba1c_std = hba1c['std']
+        eda_std = edaData['std']
+        hr_std = hrData['std']
+        temp_std = tempData['std']
+        acc_x_std = accData['std_x']
+        acc_y_std = accData['std_y']
+        acc_z_std = accData['std_z']
+        gluc_std = glucoseData['std']
 
-        # acc_mean = 0
-        gluc_mean = 0
-        sugar_mean = 0
-        carb_mean = 0
-        min_mean = 0
-        hba1c_mean = 0
-
-        # acc_std = 0
-        gluc_std = 0
-        sugar_std = 0
-        carb_std = 0
-        min_std = 0
-        hba1c_std = 0
-
-        for sample in samples:
-            # accSample = accData[sample]
-            glucoseSample = glucoseData[sample]
-            sugarSample, carbSample = foodData[sample]
-            minSample = minData[sample]
-            hba1cSample = hba1c[sample]
-            # drop nan
-            
-            # accSample = accSample[~np.isnan(accSample)]
-            glucoseSample = glucoseSample[~np.isnan(glucoseSample)]
-            sugarSample = sugarSample[~np.isnan(sugarSample)]
-            carbSample = carbSample[~np.isnan(carbSample)]
-            minSample = minSample[~np.isnan(minSample)]
-            hba1cSample = hba1cSample[~np.isnan(hba1cSample)]
-            # means 
-            
-            # acc_mean += accSample.mean().item()
-            gluc_mean += glucoseSample.mean().item()
-            sugar_mean += sugarSample.mean().item()
-            carb_mean += carbSample.mean().item()
-            min_mean += minSample.mean().item()
-            hba1c_mean += hba1cSample.mean().item()
-            # stds
-            
-            # acc_std += accSample.std().item()
-            gluc_std += glucoseSample.std().item()
-            sugar_std += sugarSample.std().item()
-            carb_std += carbSample.std().item()
-            min_std += minSample.std().item()
-            hba1c_std += hba1cSample.std().item()
-        
-        # mean
-        gluc_mean /= len(samples)
-        sugar_mean /= len(samples)
-        carb_mean /= len(samples)
-        min_mean /= len(samples)
-        hba1c_mean /= len(samples)
-        # std
-        gluc_std /= len(samples)
-        sugar_std /= len(samples)
-        carb_std /= len(samples)
-        min_std /= len(samples)
-        hba1c_std /= len(samples)
-
-        mean_list = [sugar_mean, carb_mean, min_mean, hba1c_mean, gluc_mean, gluc_mean]
-        std_list = [sugar_std, carb_std, min_mean, hba1c_std, gluc_std, gluc_std]
+        mean_list = [sugar_mean, carb_mean, min_mean, hba1c_mean, eda_mean, hr_mean, temp_mean, acc_x_mean, acc_y_mean, acc_z_mean, gluc_mean, gluc_mean]
+        std_list = [sugar_std, carb_std, min_std, hba1c_std, eda_std, hr_std, temp_std, acc_x_std, acc_y_std, acc_z_std, gluc_std, gluc_std]
         std_list = [std + self.eps if std > self.eps else 1 for std in std_list]
-
         # Step 2: Define a custom transform to normalize the data
         custom_transform = transforms.Compose([
             # transforms.ToTensor(),  # Convert PIL image to Tensor
             transforms.Normalize(mean = mean_list, std = std_list)  # Normalize using mean and std
         ])
-
-        accData = None
-        edaData = None
-        hrData = None
-        tempData = None
 
         val_dataset = FeatureDataset(valSamples, glucoseData, edaData, hrData, tempData, accData, foodData, minData, hba1c, metric = self.glucMetric, dtype = self.dtype, seq_length = self.seq_length, transforms = custom_transform)
         # returns eda, hr, temp, then hba1c
@@ -490,7 +429,7 @@ class runModel:
 
         progress_bar = tqdm(enumerate(val_dataloader), total=len(val_dataloader), unit='batch')
 
-        for batch_idx, data in progress_bar:
+        for _, data in progress_bar:
             # stack the inputs and feed as 3 channel input
             if data.shape[0] < self.train_batch_size:
                 continue
@@ -513,12 +452,6 @@ class runModel:
             output = model(input).to(self.dtype).squeeze()
         elif self.modelType == "transformer":
             output = model(target, input).to(self.dtype).squeeze()
-        # elif self.modelType == "dann":
-        #     modelOut = model(input, alpha)
-        #     dann_output, output = modelOut[0].to(self.dtype), modelOut[1].to(self.dtype).squeeze()
-        else:
-            modelOut = model(input)
-            mask_output, output = modelOut[0].to(self.dtype), modelOut[1].to(self.dtype).squeeze()
         
         # graph = make_dot(output, params = dict(model.named_parameters()))
 
@@ -713,10 +646,6 @@ class runModel:
         plt.legend()
         plt.tight_layout()
         plt.savefig('plots/loss_plot_no_gluc.png')
-
-
-        
-
 
 if __name__ == "__main__":
     mainDir = "/media/nvme1/expansion/glycemic_health_data/physionet.org/files/big-ideas-glycemic-wearable/1.1.2/"

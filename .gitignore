@@ -9,3 +9,6 @@ performance/
 __pycache__/
 *.py[cod]
 *$py.class
+
+# exploratory notebook
+exploration.ipynb

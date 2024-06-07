@@ -21,7 +21,7 @@ class TransformerModel(nn.Module):
         dropout_p,
         norm_first,
         dtype,
-        num_seqs = 5,
+        num_seqs,
         no_gluc = False):
         super(TransformerModel, self).__init__()
 
@@ -37,20 +37,11 @@ class TransformerModel(nn.Module):
         self.no_gluc = no_gluc
 
         # EMBEDDING LINEAR LAYERS
-        self.embedding_acc = nn.Linear(self.seq_length, self.num_features, dtype = self.dtype)
-        self.embedding_sugar = nn.Linear(self.seq_length, self.num_features, dtype = self.dtype)
-        self.embedding_carb = nn.Linear(self.seq_length, self.num_features, dtype = self.dtype)
-        self.embedding_minutes = nn.Linear(self.seq_length, self.num_features, dtype = self.dtype)
-        self.embedding_hba1c = nn.Linear(self.seq_length, self.num_features, dtype = self.dtype)
         self.embedding_gluc = nn.Linear(self.seq_length, self.num_features, dtype = self.dtype)
-
+        self.embeddings = nn.ModuleList([nn.Linear(self.seq_length, self.num_features, dtype = self.dtype) for _ in range(self.num_seqs)])
+        
         # ENCODER LAYERS
-        self.encoder_acc = nn.TransformerEncoderLayer(d_model=self.num_features, nhead=self.num_head, norm_first = self.norm_first, dtype = self.dtype)
-        self.encoder_sugar = nn.TransformerEncoderLayer(d_model=self.num_features, nhead=self.num_head, norm_first = self.norm_first, dtype = self.dtype)
-        self.encoder_carb = nn.TransformerEncoderLayer(d_model=self.num_features, nhead=self.num_head, norm_first = self.norm_first, dtype = self.dtype)
-        self.encoder_minutes = nn.TransformerEncoderLayer(d_model=self.num_features, nhead=self.num_head, norm_first = self.norm_first, dtype = self.dtype)
-        self.encoder_hba1c = nn.TransformerEncoderLayer(d_model=self.num_features, nhead=self.num_head, norm_first = self.norm_first, dtype = self.dtype)
-        self.encoder_gluc_past = nn.TransformerEncoderLayer(d_model=self.num_features, nhead=self.num_head, norm_first = self.norm_first, dtype = self.dtype)
+        self.encoders = nn.ModuleList([nn.TransformerEncoderLayer(d_model=self.num_features, nhead=self.num_head, norm_first = self.norm_first, dtype = self.dtype) for _ in range(self.num_seqs)])
 
         # DECODER LAYERS
         self.decoder = nn.TransformerDecoderLayer(d_model=self.num_features, nhead=self.num_head, dtype = self.dtype)
@@ -67,17 +58,17 @@ class TransformerModel(nn.Module):
     # output: output after forward run through model
     def forward(self, tgt, src):
         if self.no_gluc:
-            sugar = self.embedding_sugar(src[:, 0, :]).unsqueeze(1)
-            carb = self.embedding_carb(src[:, 1, :]).unsqueeze(1)
-            minutes = self.embedding_minutes(src[:, 2, :]).unsqueeze(1)
-            hba1c = self.embedding_hba1c(src[:, 3, :]).unsqueeze(1)
+            outputs = []
+            idx = 0
+            for layer in self.embeddings:
+                outputs.append(layer(src[:, idx, :]).unsqueeze(1))
+                idx += 1
+            idx = 0
+            for layer in self.encoders:
+                outputs[idx] = layer(outputs[idx])
+                idx += 1
 
-            sugarTransformerOut = self.encoder_sugar(sugar)
-            carbTransformerOut = self.encoder_carb(carb)
-            minutesTransformerOut = self.encoder_minutes(minutes)
-            hba1cTransformerOut = self.encoder_hba1c(hba1c)
-
-            out = torch.cat((sugarTransformerOut, carbTransformerOut, minutesTransformerOut, hba1cTransformerOut), -1).to(self.dtype)
+            out = torch.cat(outputs, -1).to(self.dtype)
 
             out = F.silu(self.fc1(out))
         
@@ -90,29 +81,21 @@ class TransformerModel(nn.Module):
             return out
         # Src size must be (batch_size, src, sequence_length)
         # Tgt size must be (batch_size, tgt, sequence_length)
-        # sugarMean, carbMean, minMean, hba1cMean, glucPastMean, glucMean
-        # acc = self.embedding_acc(src[:, 0, :]).unsqueeze(1)
-        sugar = self.embedding_sugar(src[:, 0, :]).unsqueeze(1)
-        carb = self.embedding_carb(src[:, 1, :]).unsqueeze(1)
-        minutes = self.embedding_minutes(src[:, 2, :]).unsqueeze(1)
-        hba1c = self.embedding_hba1c(src[:, 3, :]).unsqueeze(1)
-        gluc_past = self.embedding_gluc(src[:, 4, :]).unsqueeze(1)
+        outputs = []
+        idx = 0
+        for layer in self.embeddings:
+            outputs.append(layer(src[:, idx, :]).unsqueeze(1))
+            idx += 1
+        idx = 0
+        for layer in self.encoders:
+            outputs[idx] = layer(outputs[idx])
+            idx += 1
 
-        # accTransformerOut = self.encoder_acc(acc)
-        sugarTransformerOut = self.encoder_sugar(sugar)
-        carbTransformerOut = self.encoder_carb(carb)
-        minutesTransformerOut = self.encoder_minutes(minutes)
-        hba1cTransformerOut = self.encoder_hba1c(hba1c)
-        glucPastTransformerOut = self.encoder_gluc_past(gluc_past)
+        out = torch.cat(outputs, -1).to(self.dtype)
 
-        out = torch.cat((sugarTransformerOut, carbTransformerOut, minutesTransformerOut, hba1cTransformerOut, glucPastTransformerOut), -1).to(self.dtype)
-        # out = torch.cat((accTransformerOut, sugarTransformerOut, carbTransformerOut, minutesTransformerOut, hba1cTransformerOut, glucPastTransformerOut), -1).to(self.dtype)
-        # out = torch.cat((edaTransformerOut, hrTransformerOut, tempTransformerOut, accTransformerOut), -1).to(self.dtype)
-
-        # out = F.relu(self.fc1(self.dropout(out)))
         out = F.silu(self.fc1(out))
-        
-        tgt = self.embedding_gluc(tgt).unsqueeze(1)
+    
+        tgt = self.embeddings[-1](tgt).unsqueeze(1)
         
         out = self.decoder(tgt = tgt, memory = out, tgt_mask = self.get_tgt_mask(len(tgt)))
         out = torch.tensor(out.clone().detach().requires_grad_(True), dtype=self.fc1.weight.dtype)
