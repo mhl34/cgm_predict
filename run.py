@@ -16,6 +16,8 @@ from models.Conv1DModel import Conv1DModel
 from models.LstmModel import LstmModel
 from models.TransformerModel import TransformerModel
 from models.UNet import UNet
+from models.ESN import ESN
+import echotorch.nn as etnn
 from sklearn.model_selection import KFold
 
 sns.set_theme()
@@ -106,6 +108,9 @@ class runModel:
         elif modelType == "unet":
             print(f"model {modelType}")
             return UNet(self.num_features, normalize = False, seq_len = self.seq_length, dropout = self.dropout_p)
+        elif modelType == "esn":
+            print(f"model {modelType}")
+            return ESN(input_dim = self.num_features, hidden_dim = 500, output_dim = 1, dtype = self.dtype)
         else:
             raise Exception("Invalid model type")
         
@@ -337,12 +342,21 @@ class runModel:
         valSamples = samples[-4:]
 
         model = self.modelChooser(self.modelType)
+        for param in model.parameters():
+            print(param)
         optimizer = optim.Adam(model.parameters(), lr = self.lr, weight_decay = self.weight_decay)
         scheduler = CosineAnnealingLR(optimizer, T_max=self.num_epochs)
         criterion = nn.MSELoss()
 
         self.getData(self.data_folder, trainSamples, "train_data.npz")
         train_dataloader = np.load(self.data_folder + "train_data.npz")['arr']
+
+        unbatched_data = np.concatenate(train_dataloader, axis = 0).squeeze(2)
+        data = unbatched_data[:, :-2, :]
+        target = unbatched_data[:, -1, :]
+        print(data.shape, target.shape)
+        model.fit(data, target)
+        exit()
         
         self.train(model, train_dataloader, optimizer, scheduler, criterion)
 
@@ -438,6 +452,6 @@ if __name__ == "__main__":
     mainDir = "/media/nvme1/expansion/glycemic_health_data/physionet.org/files/big-ideas-glycemic-wearable/1.1.2/"
     # mainDir = "/Users/matthewlee/Matthew/Work/DunnLab/big-ideas-lab-glycemic-variability-and-wearable-device-data-1.1.0/"
     obj = runModel(mainDir)
-    # obj.run_train_test()
+    obj.run_train_test()
     # obj.run()
-    obj.monte_carlo_dropout()
+    # obj.monte_carlo_dropout()
