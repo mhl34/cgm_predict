@@ -26,6 +26,7 @@ class runModel:
         parser.add_argument("-m", "--modelType", dest="modelType", help="input the type of model you want to use")
         parser.add_argument("-e", "--epochs", default=100, dest="num_epochs", help="input the number of epochs to run")
         parser.add_argument("-n", "--normalize", action='store_true', dest="normalize", help="input whether or not to normalize the input sequence")
+        parser.add_argument("-k", "--k_fold", default=-1, dest="kfold", help="input whether or not to run k-fold validation")
         parser.add_argument("-s", "--seq_len", default=28, dest="seq_len", help="input the sequence length to analyze")
         parser.add_argument("-ng", "--no_glucose", action='store_true', dest="no_gluc", help="input whether or not to remove the glucose sample")
         args = parser.parse_args()
@@ -38,6 +39,7 @@ class runModel:
         self.num_epochs = int(args.num_epochs)
         self.normalize = args.normalize
         self.no_gluc = args.no_gluc
+        self.kfold = int(args.kfold)
 
         # model parameters
         self.dropout_p = 0.5
@@ -151,15 +153,16 @@ class runModel:
             # for outVal, targetVal in zip(output_arr.detach().numpy()[-1][:-3], target_arr.detach().numpy()[-1][:-3]):
             #     print(f"output: {outVal.item()}, target: {targetVal.item()}, difference: {(outVal.item() - targetVal.item())}")
        
-            avg_loss = sum(lossLst)/len(lossLst)
-            avg_acc  = sum(accLst)/len(accLst)
+            avg_loss = np.mean(lossLst)
+            avg_acc  = np.mean(accLst)
 
             global_loss_lst.append(avg_loss)
             global_acc_lst.append(avg_acc)
 
             print(f"epoch {epoch + 1} training loss: {avg_loss} learning rate: {scheduler.get_last_lr()} training accuracy: {avg_acc}")
 
-            if avg_acc > best_acc:
+            if self.kfold == -1:
+                if avg_acc > best_acc:
                     best_acc = acc_val
                     if not os.path.exists(self.checkpoint_folder):
                         os.makedirs(self.checkpoint_folder)
@@ -169,13 +172,12 @@ class runModel:
                             'lr': self.lr}
                     torch.save(state, os.path.join(self.checkpoint_folder, f'{self.modelType}.pth' if not self.no_gluc else f'{self.modelType}_no_gluc.pth'))
         
-        file_path_loss = f"{self.performance_folder}{self.modelType}_loss"
-        file_path_acc = f"{self.performance_folder}{self.modelType}_acc"
-        np.savez(file_path_acc, arr = np.array(global_acc_lst))
-        np.savez(file_path_loss, arr = np.array(global_loss_lst))
-
+        if self.kfold == -1:
+            file_path_loss = f"{self.performance_folder}{self.modelType}_loss"
+            file_path_acc = f"{self.performance_folder}{self.modelType}_acc"
+            np.savez(file_path_acc, arr = np.array(global_acc_lst))
+            np.savez(file_path_loss, arr = np.array(global_loss_lst))
             
-
     def evaluate(self, model, val_dataloader, criterion):
         model.eval()
         with torch.no_grad():
@@ -209,45 +211,54 @@ class runModel:
                 target_arr = ((target * self.train_std) + self.train_mean)
                 accLst.append(1 - self.mape(output_arr, target_arr))
 
-            print(f"val loss: {sum(lossLst)/len(lossLst)} val accuracy: {sum(accLst)/len(accLst)}")
+            print(f"val loss: {np.mean(lossLst)} val accuracy: {np.mean(accLst)}")
 
-            # create example output plot with the epoch
-            plt.clf()
-            plt.grid(True)
-            plt.figure(figsize=(8, 6))
+            if self.kfold == -1:
+                # create example output plot with the epoch
+                plt.clf()
+                plt.grid(True)
+                plt.figure(figsize=(8, 6))
 
-            # Plot the target array
-            plt.plot(target_arr.detach().numpy()[-1], label='Target')
+                # Plot the target array
+                plt.plot(target_arr.detach().numpy()[-1], label='Target')
 
-            # Plot the output arrays (first and second arrays in the tuple)
-            plt.plot(output_arr.detach().numpy()[-1], label='Output')
+                # Plot the output arrays (first and second arrays in the tuple)
+                plt.plot(output_arr.detach().numpy()[-1], label='Output')
 
-            # Add labels and legend
-            plt.xlabel('Index')
-            plt.ylabel('Value')
-            plt.title(f'Target vs. Output (model: {self.modelType})', fontdict={'fontsize': 16, 'fontweight': 'bold'})
-            plt.legend()
+                # Add labels and legend
+                plt.xlabel('Index')
+                plt.ylabel('Value')
+                plt.title(f'Target vs. Output (model: {self.modelType})', fontdict={'fontsize': 16, 'fontweight': 'bold'})
+                plt.legend()
 
-            # Save the plot as a PNG file
-            if self.no_gluc:
-                plt.savefig(f'plots/{self.modelType}_output_no_gluc.png')
-            else:
-                plt.savefig(f'plots/{self.modelType}_output.png')            
+                # Save the plot as a PNG file
+                if self.no_gluc:
+                    plt.savefig(f'plots/{self.modelType}_output_no_gluc.png')
+                else:
+                    plt.savefig(f'plots/{self.modelType}_output.png') 
+        return np.mean(lossLst), np.mean(accLst)           
 
     def mape(self, pred, target):
         return (torch.mean(torch.div(torch.abs(target - pred), torch.abs(target)))).item()
 
-    def run_k_fold(self):
+    def run(self):
+        if self.kfold == -1:
+            self.run_train_test()
+        else:
+            self.run_k_fold(self.kfold)
+
+    def run_k_fold(self, folds):
         samples = [str(i).zfill(3) for i in range(1, 17)]
 
         self.getData(self.data_folder, samples, "full_data.npz")
         full_dataloader = np.load(self.data_folder + "full_data.npz")['arr']
 
-        k = 5  # Number of folds
+        k = folds # Number of folds
         kf = KFold(n_splits=k, shuffle=True, random_state=42)
 
         fold = 0
-        fold_results = []
+        fold_losses = []
+        fold_accs = []
 
         for train_index, val_index in kf.split(full_dataloader):
             fold += 1
@@ -267,12 +278,13 @@ class runModel:
             print("============================")
 
             # Evaluate the model
-            val_loss = self.evaluate(model, val_dataloader, criterion)
-            print(f'Fold {fold} - Validation Loss: {val_loss}')
+            val_loss, val_acc = self.evaluate(model, val_dataloader, criterion)
+            print(f'Fold {fold} - Validation Loss: {val_loss} - Validation Accuracy: {val_acc}')
 
-            fold_results.append(val_loss)
+            fold_losses.append(val_loss)
+            fold_accs.append(val_acc)
         
-        print(f'Average Validation Loss: {np.mean(fold_results)}')
+        print(f'Average Validation Loss: {np.mean(fold_losses)} - Average Validation Accuracy: {np.mean(fold_accs)}')
 
     def run_train_test(self):
         samples = [str(i).zfill(3) for i in range(1, 17)]
@@ -297,7 +309,7 @@ class runModel:
 
         val_dataloader = np.load(self.data_folder + "val_data.npz")['arr']
 
-        self.evaluate(model, val_dataloader, criterion)
+        _, _ = self.evaluate(model, val_dataloader, criterion)
 
     def getData(self, save_dir, samples, file_name):
         data_list = []
@@ -586,4 +598,4 @@ if __name__ == "__main__":
     # mainDir = "/Users/matthewlee/Matthew/Work/DunnLab/big-ideas-lab-glycemic-variability-and-wearable-device-data-1.1.0/"
     obj = runModel(mainDir)
     # obj.run_train_test()
-    obj.run_k_fold()
+    obj.run()
