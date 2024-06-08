@@ -76,6 +76,8 @@ class runModel:
         self.check_dir(self.model_folder)
         self.performance_folder = "performance/"
         self.check_dir(self.performance_folder)
+        self.plots_folder = "plots/"
+        self.check_dir(self.plots_folder)
 
     def check_dir(self, folder_path):
         """
@@ -267,9 +269,9 @@ class runModel:
 
                 # Save the plot as a PNG file
                 if self.no_gluc:
-                    plt.savefig(f'plots/{self.modelType}_output_no_gluc.png')
+                    plt.savefig(f'{self.plots_folder}{self.modelType}_output_no_gluc.png')
                 else:
-                    plt.savefig(f'plots/{self.modelType}_output.png') 
+                    plt.savefig(f'{self.plots_folder}{self.modelType}_output.png') 
         return np.mean(lossLst), np.mean(accLst)           
 
     def mape(self, pred, target):
@@ -349,13 +351,76 @@ class runModel:
         print("============================")
 
         self.getData(self.data_folder, valSamples, "val_data.npz")
-
         val_dataloader = np.load(self.data_folder + "val_data.npz")['arr']
 
         _, _ = self.evaluate(model, val_dataloader, criterion)
 
-    def monte_carlo_dropout(self):
-        model.train()
+    def enable_dropout(self, model):
+        """
+        Enable just the dropout for the monte carlo dropout simulation
+        """
+        for m in model.modules():
+            if m.__class__.__name__.startswith('Dropout'):
+                m.train()
+
+    def monte_carlo_dropout(self, runs = 100):
+        """
+        Uncertainty estimation using Monte Carlo dropout
+        """
+        model = self.modelLoader(self.modelType)
+        model.eval()
+        self.enable_dropout(model)
+
+        dataloader = np.load(self.data_folder + "full_data.npz")['arr']
+        data = dataloader[-1]
+
+        preds_list = []
+        progress_bar = tqdm(range(runs), total=runs, desc='Monte Carlo Dropout')
+        for _ in progress_bar:
+            data = torch.Tensor(data).to(self.dtype)
+            # stack the inputs and feed as 3 channel input
+            data = data.squeeze(2)
+            if self.no_gluc:
+                input = data[:, :-2, :].to(self.dtype)
+            else:
+                input = data[:, :-1, :].to(self.dtype)
+        
+            target = data[:, -1, :]
+
+            if self.modelType == "conv1d" or self.modelType == "lstm" or self.modelType == "unet":
+                output = model(input).to(self.dtype).squeeze()
+            elif self.modelType == "transformer":
+                output = model(target, input).to(self.dtype).squeeze()
+            output_arr = ((output * self.train_std) + self.train_mean)
+            preds_list.append(output_arr[-1].detach().numpy())
+        
+        target_arr = ((target[-1] *self.train_std) + self.train_mean).detach().numpy()
+        predictions = torch.Tensor(np.array(preds_list))
+        mean_prediction = predictions.mean(dim=0)
+        uncertainty = predictions.std(dim=0)
+
+        time = np.arange(0, predictions.shape[-1], 1) * 5
+
+        mean_arr = mean_prediction.detach().numpy()
+        std_arr = uncertainty.detach().numpy()
+        lower_arr = mean_arr - 2 * std_arr
+        upper_arr = mean_arr + 2 * std_arr
+
+        plt.plot(time, mean_arr, color = 'blue', label='Mean', linewidth = 2)
+        plt.plot(time, target_arr, color = 'orange', label='Target', linewidth = 2)
+        plt.fill_between(time, lower_arr, upper_arr, color='skyblue', alpha=0.5, label='Uncertainty')
+
+        # Set labels and title
+        plt.xlabel("Interval")
+        plt.ylabel("Glucose Value (mg/dL)")
+        plt.title(f"{self.modelType} Monte Carlo Dropout")
+        plt.legend(loc = "lower left")
+
+        # Save the plot
+        plt.savefig(f'{self.plots_folder}{self.modelType}_mcd_plot.png')
+        
+        return mean_prediction, uncertainty, preds_list
+        
 
     def getData(self, save_dir, samples, file_name):
         """
@@ -557,9 +622,9 @@ class runModel:
         plt.legend()
         plt.tight_layout()
         if self.no_gluc:
-            plt.savefig('plots/output_plot_no_gluc.png')
+            plt.savefig(f'{self.plots_folder}output_plot_no_gluc.png')
         else:
-            plt.savefig('plots/output_plot.png')
+            plt.savefig(f'{self.plots_folder}output_plot.png')
 
     def plot_performance(self):
         """
@@ -634,7 +699,7 @@ class runModel:
         # plt.legend(loc='lower center')
         plt.legend()
         plt.tight_layout()
-        plt.savefig('plots/accuracy_plot_no_gluc.png')
+        plt.savefig(f'{self.plots_folder}accuracy_plot_no_gluc.png')
 
         plt.clf()
         plt.figure(figsize=(8, 6))
@@ -649,11 +714,12 @@ class runModel:
         # plt.legend(loc='lower center')
         plt.legend()
         plt.tight_layout()
-        plt.savefig('plots/loss_plot_no_gluc.png')
+        plt.savefig(f'{self.plots_folder}loss_plot_no_gluc.png')
 
 if __name__ == "__main__":
     mainDir = "/media/nvme1/expansion/glycemic_health_data/physionet.org/files/big-ideas-glycemic-wearable/1.1.2/"
     # mainDir = "/Users/matthewlee/Matthew/Work/DunnLab/big-ideas-lab-glycemic-variability-and-wearable-device-data-1.1.0/"
     obj = runModel(mainDir)
     # obj.run_train_test()
-    obj.run()
+    # obj.run()
+    obj.monte_carlo_dropout()
