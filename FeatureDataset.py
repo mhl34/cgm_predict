@@ -6,7 +6,7 @@ import torch
 from utils import createGlucStats
 
 class FeatureDataset(Dataset):
-    def __init__(self, samples, glucose, eda, hr, temp, acc, food, minutes, hba1c, metric = "mean", dtype = torch.float64, seq_length = 28, transforms = None):
+    def __init__(self, samples, glucose, eda, hr, temp, acc, food, minutes, hba1c, dtype = torch.float64, seq_length = 28, transforms = None):
         self.samples = samples
         self.glucose = glucose
         self.eda = eda
@@ -18,7 +18,6 @@ class FeatureDataset(Dataset):
         self.hba1c = hba1c
         self.seq_length = seq_length
         self.pp5vals = pp5_vals()
-        self.metric = metric
         self.dtype = dtype
         self.transforms = transforms
 

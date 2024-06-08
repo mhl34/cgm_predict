@@ -16,6 +16,7 @@ from models.Conv1DModel import Conv1DModel
 from models.LstmModel import LstmModel
 from models.TransformerModel import TransformerModel
 from models.UNet import UNet
+from sklearn.model_selection import KFold
 
 sns.set_theme()
 
@@ -23,14 +24,12 @@ class runModel:
     def __init__(self, mainDir):
         parser = argparse.ArgumentParser()
         parser.add_argument("-m", "--modelType", dest="modelType", help="input the type of model you want to use")
-        parser.add_argument("-gm", "--glucMetric", default = "mean", dest="glucMetric", help="input the type of glucose metric you want to regress for")
         parser.add_argument("-e", "--epochs", default=100, dest="num_epochs", help="input the number of epochs to run")
         parser.add_argument("-n", "--normalize", action='store_true', dest="normalize", help="input whether or not to normalize the input sequence")
         parser.add_argument("-s", "--seq_len", default=28, dest="seq_len", help="input the sequence length to analyze")
         parser.add_argument("-ng", "--no_glucose", action='store_true', dest="no_gluc", help="input whether or not to remove the glucose sample")
         args = parser.parse_args()
         self.modelType = args.modelType
-        self.glucMetric = args.glucMetric
         self.dtype = torch.double if self.modelType == "conv1d" else torch.float64
         self.mainDir = mainDir
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -45,7 +44,7 @@ class runModel:
         self.domain_lambda = 0.01
         self.train_batch_size = 32
         self.val_batch_size = 32
-        self.num_features = 11 if not self.no_gluc else 10
+        self.num_features = 11
         self.num_features = self.num_features - 1 if self.no_gluc else self.num_features
         self.lr = 1e-3
         self.weight_decay = 1e-8
@@ -56,11 +55,10 @@ class runModel:
         glucoseData = dataProcessor.loadData(samples, "dexcom")
         self.train_mean = glucoseData['mean']
         self.train_std = glucoseData['std']
-        print(self.train_mean, self.train_std)
         self.eps = 1e-12
 
         # lstm parameters 
-        self.hidden_size = 32
+        self.hidden_size = 128
         self.num_layers = 2
 
         # transformer parameters
@@ -103,6 +101,7 @@ class runModel:
 
 
     def train(self, model, train_dataloader, optimizer, scheduler, criterion):
+        model.train()
         best_acc = -float('inf')
         global_loss_lst = []
         global_acc_lst = []
@@ -149,8 +148,8 @@ class runModel:
                 accLst.append(acc_val)
             scheduler.step()
 
-            for outVal, targetVal in zip(output_arr.detach().numpy()[-1][:-3], target_arr.detach().numpy()[-1][:-3]):
-                print(f"output: {outVal.item()}, target: {targetVal.item()}, difference: {(outVal.item() - targetVal.item())}")
+            # for outVal, targetVal in zip(output_arr.detach().numpy()[-1][:-3], target_arr.detach().numpy()[-1][:-3]):
+            #     print(f"output: {outVal.item()}, target: {targetVal.item()}, difference: {(outVal.item() - targetVal.item())}")
        
             avg_loss = sum(lossLst)/len(lossLst)
             avg_acc  = sum(accLst)/len(accLst)
@@ -178,6 +177,7 @@ class runModel:
             
 
     def evaluate(self, model, val_dataloader, criterion):
+        model.eval()
         with torch.no_grad():
             epoch = 1
             progress_bar = tqdm(enumerate(val_dataloader), total=len(val_dataloader), desc=f'Epoch {epoch + 1}/{self.num_epochs}', unit='batch')
@@ -237,19 +237,54 @@ class runModel:
     def mape(self, pred, target):
         return (torch.mean(torch.div(torch.abs(target - pred), torch.abs(target)))).item()
 
-    def run(self):
+    def run_k_fold(self):
+        samples = [str(i).zfill(3) for i in range(1, 17)]
+
+        self.getData(self.data_folder, samples, "full_data.npz")
+        full_dataloader = np.load(self.data_folder + "full_data.npz")['arr']
+
+        k = 5  # Number of folds
+        kf = KFold(n_splits=k, shuffle=True, random_state=42)
+
+        fold = 0
+        fold_results = []
+
+        for train_index, val_index in kf.split(full_dataloader):
+            fold += 1
+            print(f'Fold {fold}')
+
+            train_dataloader, val_dataloader = full_dataloader[train_index], full_dataloader[val_index]
+            model = self.modelChooser(self.modelType, samples)
+            optimizer = optim.Adam(model.parameters(), lr = self.lr, weight_decay = self.weight_decay)
+            scheduler = CosineAnnealingLR(optimizer, T_max=self.num_epochs)
+            criterion = nn.MSELoss()
+
+            # Train the model
+            self.train(model, train_dataloader, optimizer, scheduler, criterion)
+            
+            print("============================")
+            print("Evaluating Fold...")
+            print("============================")
+
+            # Evaluate the model
+            val_loss = self.evaluate(model, val_dataloader, criterion)
+            print(f'Fold {fold} - Validation Loss: {val_loss}')
+
+            fold_results.append(val_loss)
+        
+        print(f'Average Validation Loss: {np.mean(fold_results)}')
+
+    def run_train_test(self):
         samples = [str(i).zfill(3) for i in range(1, 17)]
         trainSamples = samples[:-5]
         valSamples = samples[-5:]
 
         model = self.modelChooser(self.modelType, samples)
-        self.getTrainData(self.data_folder)
-
         optimizer = optim.Adam(model.parameters(), lr = self.lr, weight_decay = self.weight_decay)
         scheduler = CosineAnnealingLR(optimizer, T_max=self.num_epochs)
-
         criterion = nn.MSELoss()
 
+        self.getData(self.data_folder, trainSamples, "train_data.npz")
         train_dataloader = np.load(self.data_folder + "train_data.npz")['arr']
         
         self.train(model, train_dataloader, optimizer, scheduler, criterion)
@@ -257,135 +292,34 @@ class runModel:
         print("============================")
         print("Evaluating...")
         print("============================")
-        model.eval()
 
-        # drop auxiliary networks
-        if self.modelType == "ssl":
-            model.decoder = nn.Identity()
-        if self.modelType == "dann":
-            model.adversary = nn.Identity()
-
-        self.getEvalData(self.data_folder)
+        self.getData(self.data_folder, valSamples, "val_data.npz")
 
         val_dataloader = np.load(self.data_folder + "val_data.npz")['arr']
 
         self.evaluate(model, val_dataloader, criterion)
 
-    def getTrainData(self, save_dir):
-        samples = [str(i).zfill(3) for i in range(1, 17)]
-        trainSamples = samples[:-5]
-
-        file_name = "train_data.npz"
+    def getData(self, save_dir, samples, file_name):
+        data_list = []
         file_path = save_dir + file_name
 
         if os.path.exists(file_path):
-            print("Train Data Found!")
+            print(f"{file_name} Found!")
             return
         else:
-            print("Creating Train Data File")
+            print(f"Creating {file_name} File")
 
         # load in classes
-        dataProcessor = DataProcessor(trainSamples, mainDir = self.mainDir)
+        dataProcessor = DataProcessor(samples, mainDir = self.mainDir)
 
-        foodData = dataProcessor.loadData(trainSamples, "food")
-        glucoseData = dataProcessor.loadData(trainSamples, "dexcom")
-        edaData = dataProcessor.loadData(trainSamples, "eda")
-        tempData = dataProcessor.loadData(trainSamples, "temp")
-        hrData = dataProcessor.loadData(trainSamples, "hr")
-        accData = dataProcessor.loadData(trainSamples, "acc")
-        hba1c = dataProcessor.hba1c(trainSamples)
-        minData = dataProcessor.minFromMidnight(trainSamples)
-
-        self.train_mean = glucoseData['mean']
-        self.train_std = glucoseData['std']
-
-        # sugarTensor, carbTensor, minTensor, hba1cTensor, edaTensor, hrTensor, tempTensor, accTensor, glucPastTensor, glucTensor
-        # means
-        sugar_mean = foodData['mean_sugar']
-        carb_mean = foodData['mean_carb']
-        min_mean = minData['mean']
-        hba1c_mean = hba1c['mean']
-        eda_mean = edaData['mean']
-        hr_mean = hrData['mean']
-        temp_mean = tempData['mean']
-        acc_x_mean = accData['mean_x']
-        acc_y_mean = accData['mean_y']
-        acc_z_mean = accData['mean_z']
-        gluc_mean = glucoseData['mean']
-
-        # stds
-        sugar_std = foodData['std_sugar']
-        carb_std = foodData['std_carb']
-        min_std = minData['std']
-        hba1c_std = hba1c['std']
-        eda_std = edaData['std']
-        hr_std = hrData['std']
-        temp_std = tempData['std']
-        acc_x_std = accData['std_x']
-        acc_y_std = accData['std_y']
-        acc_z_std = accData['std_z']
-        gluc_std = glucoseData['std']
-
-        mean_list = [sugar_mean, carb_mean, min_mean, hba1c_mean, eda_mean, hr_mean, temp_mean, acc_x_mean, acc_y_mean, acc_z_mean, gluc_mean, gluc_mean]
-        std_list = [sugar_std, carb_std, min_std, hba1c_std, eda_std, hr_std, temp_std, acc_x_std, acc_y_std, acc_z_std, gluc_std, gluc_std]
-        print(mean_list)
-        print(std_list)
-        std_list = [std + self.eps if std > self.eps else 1 for std in std_list]
-
-        # Step 2: Define a custom transform to normalize the data
-        custom_transform = transforms.Compose([
-            # transforms.ToTensor(),  # Convert PIL image to Tensor
-            transforms.Normalize(mean = mean_list, std = std_list)  # Normalize using mean and std
-        ])
-
-        train_dataset = FeatureDataset(trainSamples, glucoseData, edaData, hrData, tempData, accData, foodData, minData, hba1c, metric = self.glucMetric, dtype = self.dtype, seq_length = self.seq_length, transforms = custom_transform)
-        # returns eda, hr, temp, then hba1c
-        train_dataloader = DataLoader(train_dataset, batch_size = self.train_batch_size, shuffle = True)
-
-        progress_bar = tqdm(enumerate(train_dataloader), total=len(train_dataloader), unit='batch')
-
-        # where to store the data
-        data_list = []
-
-        # for batch_idx, (sample, acc, sugar, carb, mins, hba1c, glucPast, glucPres) in progress_bar:
-        for _, data in progress_bar:
-            # stack the inputs and feed as 3 channel input
-            if data.shape[0] < self.train_batch_size:
-                continue
-            data_list.append(data.detach().numpy())
-
-        data_np_arr = np.array(data_list)
-
-        np.savez(file_path, arr = data_np_arr)
-
-        print(f"Array saved to {file_path} successfully.")
-
-    def getEvalData(self, save_dir):
-        samples = [str(i).zfill(3) for i in range(1, 17)]
-        valSamples = samples[-5:]
-
-        data_list = []
-
-        file_name = "val_data.npz"
-        file_path = save_dir + file_name
-
-        if os.path.exists(file_path):
-            print("Val Data Found!")
-            return
-        else:
-            print("Creating Val Data File")
-
-        # load in classes
-        dataProcessor = DataProcessor(valSamples, mainDir = self.mainDir)
-
-        foodData = dataProcessor.loadData(valSamples, "food")
-        glucoseData = dataProcessor.loadData(valSamples, "dexcom")
-        edaData = dataProcessor.loadData(valSamples, "eda")
-        tempData = dataProcessor.loadData(valSamples, "temp")
-        hrData = dataProcessor.loadData(valSamples, "hr")
-        accData = dataProcessor.loadData(valSamples, "acc")
-        hba1c = dataProcessor.hba1c(valSamples)
-        minData = dataProcessor.minFromMidnight(valSamples)
+        foodData = dataProcessor.loadData(samples, "food")
+        glucoseData = dataProcessor.loadData(samples, "dexcom")
+        edaData = dataProcessor.loadData(samples, "eda")
+        tempData = dataProcessor.loadData(samples, "temp")
+        hrData = dataProcessor.loadData(samples, "hr")
+        accData = dataProcessor.loadData(samples, "acc")
+        hba1c = dataProcessor.hba1c(samples)
+        minData = dataProcessor.minFromMidnight(samples)
 
        # sugarTensor, carbTensor, minTensor, hba1cTensor, edaTensor, hrTensor, tempTensor, accTensor, glucPastTensor, glucTensor
         # means
@@ -423,11 +357,11 @@ class runModel:
             transforms.Normalize(mean = mean_list, std = std_list)  # Normalize using mean and std
         ])
 
-        val_dataset = FeatureDataset(valSamples, glucoseData, edaData, hrData, tempData, accData, foodData, minData, hba1c, metric = self.glucMetric, dtype = self.dtype, seq_length = self.seq_length, transforms = custom_transform)
+        dataset = FeatureDataset(samples, glucoseData, edaData, hrData, tempData, accData, foodData, minData, hba1c, dtype = self.dtype, seq_length = self.seq_length, transforms = custom_transform)
         # returns eda, hr, temp, then hba1c
-        val_dataloader = DataLoader(val_dataset, batch_size = self.val_batch_size, shuffle = False)
+        dataloader = DataLoader(dataset, batch_size = self.val_batch_size, shuffle = False)
 
-        progress_bar = tqdm(enumerate(val_dataloader), total=len(val_dataloader), unit='batch')
+        progress_bar = tqdm(enumerate(dataloader), total=len(dataloader), unit='batch')
 
         for _, data in progress_bar:
             # stack the inputs and feed as 3 channel input
@@ -651,4 +585,5 @@ if __name__ == "__main__":
     mainDir = "/media/nvme1/expansion/glycemic_health_data/physionet.org/files/big-ideas-glycemic-wearable/1.1.2/"
     # mainDir = "/Users/matthewlee/Matthew/Work/DunnLab/big-ideas-lab-glycemic-variability-and-wearable-device-data-1.1.0/"
     obj = runModel(mainDir)
-    obj.run()
+    # obj.run_train_test()
+    obj.run_k_fold()

@@ -16,34 +16,13 @@ class LstmModel(nn.Module):
         self.dtype = dtype
         self.seq_len = seq_len
         self.bidirectional = bidirectional
-        self.lstm_encoder = nn.LSTM(input_size = self.input_size * self.num_features, hidden_size = self.hidden_size, num_layers = self.num_layers, batch_first = self.batch_first, dropout = self.dropout_p, dtype = self.dtype, bidirectional = self.bidirectional)
-        self.lstm_decoder = nn.LSTM(input_size = self.hidden_size, hidden_size = self.hidden_size, num_layers = self.num_layers, batch_first = self.batch_first, dropout = self.dropout_p, dtype = self.dtype)
-        self.fc1 = nn.Linear(self.hidden_size * 2 if self.bidirectional else self.hidden_size, 64, dtype = self.dtype)
-        self.fc2 = nn.Linear(64, 32, dtype = self.dtype)
-        self.fc3 = nn.Linear(32, self.input_size, dtype = self.dtype)
-        # self.ssl = True
-        self.mask_len = 7
+        self.lstm_encoder = nn.LSTM(input_size = self.num_features, hidden_size = self.hidden_size, num_layers = self.num_layers, batch_first = self.batch_first, dropout = self.dropout_p, dtype = self.dtype, bidirectional = self.bidirectional)
+        self.fc1 = nn.Linear(self.hidden_size * 2 if self.bidirectional else self.hidden_size, self.input_size, dtype = self.dtype)
         self.dropout = nn.Dropout(self.dropout_p)
-        self.decoder = nn.Identity()
 
     def forward(self, x):
-        x = x.reshape(x.size(0), -1).to(self.dtype)
+        x = x.permute(0,2,1)
         out, _ = self.lstm_encoder(x)
-
-        out, _ = self.lstm_decoder(out)       
-
-        out = out.reshape(out.size(0), -1).to(self.dtype)
-
-        out = F.silu(self.fc1(self.dropout(out)))
-        out = F.silu(self.fc2(self.dropout(out)))
-        out = self.fc3(self.dropout(out))
-
+        out = out[:, -1, :]
+        out = self.fc1(self.dropout(out))
         return out
-    
-    def getMasked(self, data, mask_len = 5):
-        mask = torch.ones_like(data)
-        _, _, seq_len = mask.shape
-        index = random.randint(0, seq_len - mask_len - 1)
-        mask[:,:,index:index + mask_len] = 0
-        data = data * mask
-        return data
