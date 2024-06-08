@@ -25,7 +25,7 @@ class UNetEncoder(nn.Module):
         
     def forward(self, x):
         x = torch.tensor(x.clone().detach().requires_grad_(True), dtype=self.conv1.weight.dtype)
-        out = F.silu(self.conv1(self.dropout1d(x)))
+        out = F.silu(self.conv1(x))
         out = F.silu(self.conv2(self.dropout1d(out)))
         out = F.silu(self.conv3(self.dropout1d(out)))
         out = F.silu(self.conv4(self.dropout1d(out)))
