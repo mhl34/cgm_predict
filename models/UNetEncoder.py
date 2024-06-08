@@ -5,7 +5,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 class UNetEncoder(nn.Module):
-    def __init__(self, num_features, normalize = False, seq_len = 28):
+    def __init__(self, num_features, normalize = False, seq_len = 28, dropout = 0):
         super(UNetEncoder, self).__init__()
         self.num_features = num_features
         # input: 28 x 4
@@ -18,11 +18,16 @@ class UNetEncoder(nn.Module):
         # input: 10 x 32
         # output: 6 x 128
         self.conv3 = nn.Conv1d(in_channels = 32, out_channels = 128, kernel_size = 5, stride = 1)
+        # input: 6 x 128
+        # input 6 x 512
+        self.conv4 = nn.Conv1d(in_channels = 128, out_channels = 512, kernel_size = 3, stride = 1, padding = 1)
+        self.dropout1d = nn.Dropout1d(dropout)
         
     def forward(self, x):
         x = torch.tensor(x.clone().detach().requires_grad_(True), dtype=self.conv1.weight.dtype)
-        out = self.conv1(x)
-        out = self.conv2(out)
-        out = self.conv3(out)
+        out = F.silu(self.conv1(self.dropout1d(x)))
+        out = F.silu(self.conv2(self.dropout1d(out)))
+        out = F.silu(self.conv3(self.dropout1d(out)))
+        out = F.silu(self.conv4(self.dropout1d(out)))
         return out
         

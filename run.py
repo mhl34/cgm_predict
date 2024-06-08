@@ -78,13 +78,19 @@ class runModel:
         self.check_dir(self.performance_folder)
 
     def check_dir(self, folder_path):
+        """
+        Ensures all of the directories are created locally for saving
+        """
         if not os.path.exists(folder_path):
             os.makedirs(folder_path)
             print(f"Directory '{folder_path}' created.")
         else:
             print(f"Directory '{folder_path}' already exists.")
 
-    def modelChooser(self, modelType, samples):
+    def modelChooser(self, modelType):
+        """
+        Selects the model based on specified args
+        """
         if modelType == "conv1d":
             print(f"model {modelType}")
             return Conv1DModel(num_features = self.num_features, dropout_p = self.dropout_p, seq_len = self.seq_length)
@@ -97,12 +103,14 @@ class runModel:
             # return TransformerModel(num_features = 1024, num_head = 256, seq_length = self.seq_length, dropout_p = self.dropout_p, norm_first = True, dtype = self.dtype)
         elif modelType == "unet":
             print(f"model {modelType}")
-            return UNet(self.num_features, normalize = False, seq_len = self.seq_length)
+            return UNet(self.num_features, normalize = False, seq_len = self.seq_length, dropout = self.dropout_p)
         else:
             raise Exception("Invalid model type")
 
-
     def train(self, model, train_dataloader, optimizer, scheduler, criterion):
+        """
+        Runs the training regiment, returns the outputs of loss and accuracy for plotting if it is not running K-Fold Cross Validation
+        """
         model.train()
         best_acc = -float('inf')
         global_loss_lst = []
@@ -179,6 +187,9 @@ class runModel:
             np.savez(file_path_loss, arr = np.array(global_loss_lst))
             
     def evaluate(self, model, val_dataloader, criterion):
+        """
+        Model evaluation method, plots the outputs if it's not performing K-Fold, returns the average loss and accuracy (100 - MAPE)
+        """
         model.eval()
         with torch.no_grad():
             epoch = 1
@@ -242,12 +253,18 @@ class runModel:
         return (torch.mean(torch.div(torch.abs(target - pred), torch.abs(target)))).item()
 
     def run(self):
+        """
+        Chooses which one to run based on flags
+        """
         if self.kfold == -1:
             self.run_train_test()
         else:
             self.run_k_fold(self.kfold)
 
     def run_k_fold(self, folds):
+        """
+        Runs K-Fold Cross Validation
+        """
         samples = [str(i).zfill(3) for i in range(1, 17)]
 
         self.getData(self.data_folder, samples, "full_data.npz")
@@ -287,9 +304,12 @@ class runModel:
         print(f'Average Validation Loss: {np.mean(fold_losses)} - Average Validation Accuracy: {np.mean(fold_accs)}')
 
     def run_train_test(self):
+        """
+        Runs with a simple train test split of 75-25
+        """
         samples = [str(i).zfill(3) for i in range(1, 17)]
-        trainSamples = samples[:-5]
-        valSamples = samples[-5:]
+        trainSamples = samples[:-4]
+        valSamples = samples[-4:]
 
         model = self.modelChooser(self.modelType, samples)
         optimizer = optim.Adam(model.parameters(), lr = self.lr, weight_decay = self.weight_decay)
@@ -311,7 +331,13 @@ class runModel:
 
         _, _ = self.evaluate(model, val_dataloader, criterion)
 
+    def monte_carlo_dropout(self):
+        pass
+
     def getData(self, save_dir, samples, file_name):
+        """
+        Gets the full data to perform K-Fold Cross Validation or Train-Test and stores it in a .npz file
+        """
         data_list = []
         file_path = save_dir + file_name
 
@@ -388,6 +414,9 @@ class runModel:
         print(f"Array saved to {file_path} successfully.")
 
     def plot_model(self):
+        """
+        Model Plotting Method
+        """
         samples = [str(i).zfill(3) for i in range(1, 17)]
         model = self.modelChooser(self.modelType, samples)
 
@@ -412,6 +441,9 @@ class runModel:
         # visualkeras.save(keras_model, f'{self.model_folder}{self.modelType}')
 
     def plot_output(self):
+        """
+        Plotting the outputs of the models onto a saved graph
+        """
         # to get normalization calculations
         self.getTrainData(self.data_folder)
         
@@ -507,6 +539,9 @@ class runModel:
             plt.savefig('plots/output_plot.png')
 
     def plot_performance(self):
+        """
+        Plots the saved performances from the training regiment of each of the models
+        """
         # load in accuracy arrays
         conv1d_acc = np.load(self.performance_folder + "conv1d_acc.npz")['arr']
         unet_acc = np.load(self.performance_folder + "unet_acc.npz")['arr']
