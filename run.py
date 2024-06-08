@@ -106,6 +106,29 @@ class runModel:
             return UNet(self.num_features, normalize = False, seq_len = self.seq_length, dropout = self.dropout_p)
         else:
             raise Exception("Invalid model type")
+        
+    def modelLoader(self, modelType):
+        """
+        Loads models from saved .pth files
+        """
+        no_gluc_flag = "_no_gluc" if self.no_gluc else ""
+        file = f"{modelType}{no_gluc_flag}.pth"
+        if modelType == "conv1d":
+            print(f"model {modelType}")
+            model = Conv1DModel(num_features = self.num_features, dropout_p = self.dropout_p, seq_len = self.seq_length)
+        elif modelType == "lstm":
+            print(f"model {modelType}")
+            model = LstmModel(num_features = self.num_features, input_size = self.seq_length, hidden_size = self.hidden_size, num_layers = self.num_layers, batch_first = True, dropout_p = self.dropout_p, dtype = self.dtype)
+        elif modelType == "transformer":
+            print(f"model {modelType}")
+            model = TransformerModel(num_features = self.dim_model, num_head = self.num_head, seq_length = self.seq_length, dropout_p = self.dropout_p, norm_first = True, dtype = self.dtype, num_seqs = self.num_features, no_gluc = self.no_gluc)
+        elif modelType == "unet":
+            print(f"model {modelType}")
+            model = UNet(self.num_features, normalize = False, seq_len = self.seq_length, dropout = self.dropout_p)
+        else:
+            raise Exception("Invalid model type")
+        model.load_state_dict(torch.load(self.checkpoint_folder + file)['state_dict'])
+        return model
 
     def train(self, model, train_dataloader, optimizer, scheduler, criterion):
         """
@@ -332,7 +355,7 @@ class runModel:
         _, _ = self.evaluate(model, val_dataloader, criterion)
 
     def monte_carlo_dropout(self):
-        pass
+        model.train()
 
     def getData(self, save_dir, samples, file_name):
         """
