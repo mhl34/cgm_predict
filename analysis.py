@@ -206,7 +206,7 @@ class Analysis:
         plt.xlabel("Interval")
         plt.ylabel("Glucose Value (mg/dL)")
         plt.title(f"Monte Carlo Dropout")
-        plt.legend(loc = "upper left")
+        plt.legend(loc = "upper left", prop={'size': 8})
 
         # Save the plot
         plt.savefig(f'{self.plots_folder}mcd_plot.png')
@@ -301,13 +301,7 @@ class Analysis:
         plt.gca().set_facecolor('white')
         plt.grid(True, color='grey', linestyle='--')
 
-        color_dict = {
-            "conv1d": "red",
-            "unet": "green",
-            "lstm": "blue", 
-            "transformer": "orange",
-            "target": "purple"
-        }
+        color_dict = {'lstm': 'purple', 'transformer': 'r', 'conv1d': 'g', 'unet': 'b', 'target': 'black'}
 
         linestyle_dict = {
             "conv1d": "-",
@@ -373,11 +367,11 @@ class Analysis:
         }
 
         color_dict = {
-            "conv1d": "red",
-            "unet": "green",
-            "lstm": "blue", 
-            "transformer": "orange",
-            "target": "purple"
+            'lstm': 'purple', 
+            'transformer': 'r', 
+            'conv1d': 'g', 
+            'unet': 'b', 
+            'target': 'black'
         }
 
         linestyle_dict = {
@@ -419,6 +413,7 @@ class Analysis:
         plt.grid(True, color='grey', linestyle='--')
         for key, val in performance_dict.items():
             plt.plot(np.arange(len(val['loss'])), val['loss'], label = key, color = color_dict[key], linewidth = linewidth_dict[key], linestyle = linestyle_dict[key])
+            print(key)
             print(val['loss'][-1])
         plt.xlabel("Epochs", fontsize=12, fontweight='bold')
         plt.ylabel("Loss (MSE Loss)", fontsize=12, fontweight='bold')
@@ -436,19 +431,21 @@ class Analysis:
         transformer_acc = np.load(self.performance_folder + "transformer_lopocv_accs.npz")['arr']
 
         # Additional plots for better comparison (e.g., box plot)
-        plt.figure(figsize=(10, 5))
-        box = plt.boxplot([cnn_acc, unet_acc, lstm_acc, transformer_acc], labels=['CNN', 'UNet', 'LSTM', 'Transformer'], 
+        accs_lst = [cnn_acc, unet_acc, lstm_acc, transformer_acc]
+        box = plt.boxplot(accs_lst, labels=['CNN', 'UNet', 'LSTM', 'Transformer'], 
                           patch_artist = True)
         # Define colors for each box
-        colors = ['lightblue', 'lightgreen', 'lightcoral', 'lightpink']
+        color_stds = {'lstm': 'violet', 'transformer': 'lightcoral', 'conv1d': 'lightgreen', 'unet': 'lightblue'}
+        colors = [color_stds['conv1d'], color_stds['unet'], color_stds['lstm'], color_stds['transformer']]
         for patch, color in zip(box['boxes'], colors):
             patch.set_facecolor(color)
         # Set the median line color to black and make it thicker
         for median in box['medians']:
             median.set_color('black')
             median.set_linewidth(2.5)
+        print([np.median(i) for i in accs_lst])
         plt.ylabel('Accuracy (100 - MAPE)')
-        plt.title('Leave-One-Person-Out Cross Validation (LOPOCV) Accuracies')
+        plt.title('LOPOCV Accuracies')
         plt.grid(True)
         plt.savefig(self.plots_folder + 'lopocv_box_plot.png')
 
@@ -458,5 +455,5 @@ if __name__ == "__main__":
     mainDir = "/media/nvme1/expansion/glycemic_health_data/physionet.org/files/big-ideas-glycemic-wearable/1.1.2/"
     # mainDir = "/Users/matthewlee/Matthew/Work/DunnLab/big-ideas-lab-glycemic-variability-and-wearable-device-data-1.1.0/"
     obj = Analysis(mainDir)
-    # obj.plot_lopocv()
-    obj.monte_carlo_dropout()
+    obj.plot_performance()
+    # obj.monte_carlo_dropout()
