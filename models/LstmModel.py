@@ -17,14 +17,25 @@ class LstmModel(nn.Module):
         self.seq_len = seq_len
         self.bidirectional = bidirectional
         self.lstm_encoder = nn.LSTM(input_size = self.num_features, hidden_size = self.hidden_size, num_layers = self.num_layers, batch_first = self.batch_first, dropout = self.dropout_p, dtype = self.dtype, bidirectional = self.bidirectional)
+        self.batch_norm = nn.BatchNorm1d(self.hidden_size * 2 if self.bidirectional else self.hidden_size, dtype = self.dtype)
         self.fc1 = nn.Linear(self.hidden_size * 2 if self.bidirectional else self.hidden_size, 64, dtype = self.dtype)
         self.fc2 = nn.Linear(64, self.input_size, dtype = self.dtype)
         self.dropout = nn.Dropout(self.dropout_p)
 
+        # Initialize weights
+        self._initialize_weights()
+        
     def forward(self, x):
         x = x.permute(0,2,1)
         out, _ = self.lstm_encoder(x)
-        out = out[:, -1, :]
+        out = self.batch_norm(out[:, -1, :])
         out = F.silu(self.fc1(self.dropout(out)))
         out = self.fc2(self.dropout(out))
         return out
+    
+    def _initialize_weights(self):
+        for name, param in self.named_parameters():
+            if 'weight' in name and param.ndimension() >= 2:
+                nn.init.xavier_uniform_(param)
+            elif 'bias' in name:
+                nn.init.zeros_(param)

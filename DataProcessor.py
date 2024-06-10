@@ -5,6 +5,8 @@ from utils import dateParser
 import seaborn as sns
 from scipy import signal
 from pp5 import pp5_vals
+import pickle
+import os
 
 sns.set_theme()
 
@@ -19,10 +21,16 @@ class DataProcessor:
         self.hrFormat = "HR_{0}.csv"
         self.tempFormat = "TEMP_{0}.csv"
         self.mainDir = mainDir
-        self.seq_len_dict = self.get_seq_lens(samples)
+        self.samples = samples
 
         # method parameters
         self.food_time = 6
+
+        # alignment parameters
+        self.alignment_dict = self.get_alignments(["dexcom", "temp", "eda", "acc", "hr"])
+
+        # get lengths for downsampling
+        self.seq_len_dict = self.get_seq_lens(samples)
       
     def loadData(self, samples, fileType):
         data = {}
@@ -33,9 +41,11 @@ class DataProcessor:
             for sample in samples:
                 df = pd.read_csv(self.mainDir + sample + "/" + self.dexcomFormat.format(sample))
                 lst = pd.to_numeric(df['Glucose Value (mg/dL)']).to_numpy()
-                mean += np.nanmean(lst)
-                std += np.nanstd(lst)
-                data[sample] = lst
+                start, end = self.alignment_dict[sample][fileType]
+                aligned_lst = lst[start:end]
+                mean += np.nanmean(aligned_lst)
+                std += np.nanstd(aligned_lst)
+                data[sample] = aligned_lst
             data['mean'] = mean / len(samples)
             data['std'] = std / len(samples)
         elif fileType == "temp":
@@ -45,8 +55,10 @@ class DataProcessor:
                 df = pd.read_csv(self.mainDir + sample + "/" + self.tempFormat.format(sample))
                 lst = pd.to_numeric(df[' temp']).to_numpy()
                 lst = lst.astype(np.int64)
+                start, end = self.alignment_dict[sample][fileType]
+                aligned_lst = lst[start:end]
                 # downsample for alignment with glucose data (based on pp5)
-                downsampled_temp = signal.resample(lst, self.seq_len_dict[sample])
+                downsampled_temp = signal.resample(aligned_lst, self.seq_len_dict[sample])
                 mean += np.nanmean(downsampled_temp)
                 std += np.nanstd(downsampled_temp)
                 data[sample] = downsampled_temp
@@ -56,8 +68,10 @@ class DataProcessor:
             for sample in samples:
                 df = pd.read_csv(self.mainDir + sample + "/" + self.edaFormat.format(sample))
                 lst = pd.to_numeric(df[' eda']).to_numpy()
+                start, end = self.alignment_dict[sample][fileType]
+                aligned_lst = lst[start:end]
                 # downsample for alignment with glucose data (based on pp5)
-                downsampled_eda = signal.resample(lst, self.seq_len_dict[sample])
+                downsampled_eda = signal.resample(aligned_lst, self.seq_len_dict[sample])
                 mean += np.nanmean(downsampled_eda)
                 std += np.nanstd(downsampled_eda)
                 data[sample] = downsampled_eda
@@ -67,8 +81,10 @@ class DataProcessor:
             for sample in samples:
                 df = pd.read_csv(self.mainDir + sample + "/" + self.hrFormat.format(sample))
                 lst = pd.to_numeric(df[' hr']).to_numpy()
+                start, end = self.alignment_dict[sample][fileType]
+                aligned_lst = lst[start:end]
                 # downsample for alignment with glucose data (based on pp5)
-                downsampled_hr = signal.resample(lst, self.seq_len_dict[sample])
+                downsampled_hr = signal.resample(aligned_lst, self.seq_len_dict[sample])
                 mean += np.nanmean(downsampled_hr)
                 std += np.nanstd(downsampled_hr)
                 data[sample] = downsampled_hr
@@ -84,10 +100,14 @@ class DataProcessor:
                 lst_x = pd.to_numeric(df[' acc_x']).to_numpy()
                 lst_y = pd.to_numeric(df[' acc_y']).to_numpy()
                 lst_z = pd.to_numeric(df[' acc_z']).to_numpy()
+                start, end = self.alignment_dict[sample][fileType]
+                aligned_lst_x = lst_x[start:end]
+                aligned_lst_y = lst_y[start:end]
+                aligned_lst_z = lst_z[start:end]
                 # downsample for alignment with glucose data (based on pp5)
-                downsampled_acc_x = signal.resample(lst_x, self.seq_len_dict[sample])
-                downsampled_acc_y = signal.resample(lst_y, self.seq_len_dict[sample])
-                downsampled_acc_z = signal.resample(lst_z, self.seq_len_dict[sample])
+                downsampled_acc_x = signal.resample(aligned_lst_x, self.seq_len_dict[sample])
+                downsampled_acc_y = signal.resample(aligned_lst_y, self.seq_len_dict[sample])
+                downsampled_acc_z = signal.resample(aligned_lst_z, self.seq_len_dict[sample])
                 mean_x += np.nanmean(downsampled_acc_x)
                 mean_y += np.nanmean(downsampled_acc_y)
                 mean_z += np.nanmean(downsampled_acc_z)
@@ -110,7 +130,7 @@ class DataProcessor:
             for sample in samples:
                 food_df = pd.read_csv(self.mainDir + sample + "/" + self.foodLogFormat.format(sample), sep =',', names = column_names)
                 dexcom_df = pd.read_csv(self.mainDir + sample + "/" + self.dexcomFormat.format(sample))
-                ms, mc, ss, sc, data[sample] = self.processFood(food_df, dexcom_df)
+                ms, mc, ss, sc, data[sample] = self.processFood(food_df, dexcom_df, sample)
                 mean_sugar += ms
                 mean_carb += mc
                 std_sugar += ss
@@ -140,12 +160,14 @@ class DataProcessor:
             persDict[key] = [(data[key][i], self.persComp(data[key][i], swData[key][i][0] + swData[key][i][1], swData[key][i][0] - swData[key][i][1])) for i in range(len(data[key]))]
         return persDict
     
-    def processFood(self, food_df, dexcom_df):
+    def processFood(self, food_df, dexcom_df, sample):
         sugar_array = food_df['sugar'].to_numpy()[1:]
         carb_array = food_df['total_carb'].to_numpy()[1:]
         # base it off of time_begin
         food_time_array = np.array(list(map(dateParser, food_df['time_begin'].to_numpy()[1:])))
-        gluc_time_array = np.array(list(map(dateParser, dexcom_df['Timestamp (YYYY-MM-DDThh:mm:ss)'].to_numpy())))
+        # align gluc_time_array
+        start, end = self.alignment_dict[sample]['dexcom']
+        gluc_time_array = np.array(list(map(dateParser, dexcom_df['Timestamp (YYYY-MM-DDThh:mm:ss)'].to_numpy())))[start: end]
         # gluc_time_array = np.array(list(map(self.getMins, gluc_time_array)))
         # iterate through the gluc_time_array and food_time 
         gluc_idx = 0
@@ -221,16 +243,65 @@ class DataProcessor:
         except:
             return np.nan
 
-    def downsample_with_nan(self, data, downsample_factor, zero_phase = True):
-        nan_indices = np.isnan(data)
-        data[nan_indices] = 0
-        downsampled_data = signal.decimate(data, downsample_factor, zero_phase = zero_phase)
-        return np.where(downsampled_data == 0, np.nan, downsampled_data)
-
     def get_seq_lens(self, samples):
         data = {}
         for sample in samples:
-            df = pd.read_csv(self.mainDir + sample + "/" + self.dexcomFormat.format(sample))
-            lst = pd.to_numeric(df['Glucose Value (mg/dL)']).to_numpy()
-            data[sample] = len(lst)
+            start, end = self.alignment_dict[sample]['dexcom']
+            data[sample] = end - start
         return data
+
+    def get_alignments(self, file_list):
+        """
+        get start and end indices to align the sequences by time
+        format: {sample: {filename: (start, end) ... }}
+        """
+        if os.path.exists('data/alignment_dict.pkl'):
+            with open('data/alignment_dict.pkl', 'rb') as f:
+                alignment_dict = pickle.load(f)
+                return alignment_dict
+        sample_dict = {}
+        for sample in self.samples:
+            print(f"sample {sample}")
+            dfs = {}
+            for fileType in file_list:
+                print(f"file {fileType}")
+                if fileType == "dexcom":
+                    df = pd.read_csv(self.mainDir + sample + "/" + self.dexcomFormat.format(sample))
+                    time_array = np.array(list(map(dateParser, df['Timestamp (YYYY-MM-DDThh:mm:ss)'].to_numpy())))
+                    df['time'] = time_array
+                    dfs[fileType] = df
+                elif fileType == "temp":
+                    df = pd.read_csv(self.mainDir + sample + "/" + self.tempFormat.format(sample))
+                    time_array = np.array(list(map(dateParser, df['datetime'].to_numpy())))
+                    df['time'] = time_array
+                    dfs[fileType] = df
+                elif fileType == "eda":
+                    df = pd.read_csv(self.mainDir + sample + "/" + self.edaFormat.format(sample))
+                    time_array = np.array(list(map(dateParser, df['datetime'].to_numpy())))
+                    df['time'] = time_array
+                    dfs[fileType] = df
+                elif fileType == "hr":
+                    df = pd.read_csv(self.mainDir + sample + "/" + self.hrFormat.format(sample))
+                    time_array = np.array(list(map(dateParser, df['datetime'].to_numpy())))
+                    df['time'] = time_array
+                    dfs[fileType] = df
+                elif fileType == "acc":
+                    df = pd.read_csv(self.mainDir + sample + "/" + self.accFormat.format(sample))
+                    time_array = np.array(list(map(dateParser, df['datetime'].to_numpy())))
+                    df['time'] = time_array
+                    dfs[fileType] = df
+                else:
+                    raise Exception("Unsupported file type")
+
+            start_times = [df['time'].min() for df in dfs.values()]
+            end_times = [df['time'].max() for df in dfs.values()]
+            common_start = max(start_times)
+            common_end = min(end_times)
+            
+            indices = {filename: (df[df['time'] >= common_start].index[0], df[df['time'] <= common_end].index[-1]) 
+                    for filename, df in dfs.items()}
+            
+            sample_dict[sample] = indices
+        with open('data/alignment_dict.pkl', 'wb') as f:
+            pickle.dump(sample_dict, f)
+        return sample_dict

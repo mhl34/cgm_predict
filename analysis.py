@@ -61,7 +61,7 @@ class Analysis:
 
         # lstm parameters 
         self.hidden_size = 128
-        self.num_layers = 2
+        self.num_layers = 4
 
         # transformer parameters
         self.dim_model = 1024
@@ -101,7 +101,7 @@ class Analysis:
             return LstmModel(num_features = self.num_features, input_size = self.seq_length, hidden_size = self.hidden_size, num_layers = self.num_layers, batch_first = True, dropout_p = self.dropout_p, dtype = self.dtype)
         elif modelType == "transformer":
             print(f"model {modelType}")
-            return TransformerModel(num_features = self.dim_model, num_head = self.num_head, seq_length = self.seq_length, dropout_p = self.dropout_p, norm_first = True, dtype = self.dtype, num_seqs = self.num_features, no_gluc = self.no_gluc)
+            return TransformerModel(num_features = self.dim_model, num_head = self.num_head, seq_length = self.seq_length, dropout_p = self.dropout_p, norm_first = True, dtype = self.dtype, num_seqs = self.num_features, no_gluc = self.no_gluc, bidirectional = True)
             # return TransformerModel(num_features = 1024, num_head = 256, seq_length = self.seq_length, dropout_p = self.dropout_p, norm_first = True, dtype = self.dtype)
         elif modelType == "unet":
             print(f"model {modelType}")
@@ -120,7 +120,7 @@ class Analysis:
             model = Conv1DModel(num_features = self.num_features, dropout_p = self.dropout_p, seq_len = self.seq_length)
         elif modelType == "lstm":
             print(f"model {modelType}")
-            model = LstmModel(num_features = self.num_features, input_size = self.seq_length, hidden_size = self.hidden_size, num_layers = self.num_layers, batch_first = True, dropout_p = self.dropout_p, dtype = self.dtype)
+            model = LstmModel(num_features = self.num_features, input_size = self.seq_length, hidden_size = self.hidden_size, num_layers = self.num_layers, batch_first = True, dropout_p = self.dropout_p, dtype = self.dtype, bidirectional = True)
         elif modelType == "transformer":
             print(f"model {modelType}")
             model = TransformerModel(num_features = self.dim_model, num_head = self.num_head, seq_length = self.seq_length, dropout_p = self.dropout_p, norm_first = True, dtype = self.dtype, num_seqs = self.num_features, no_gluc = self.no_gluc)
@@ -144,57 +144,72 @@ class Analysis:
         """
         Uncertainty estimation using Monte Carlo dropout
         """
-        model = self.modelLoader(self.modelType)
-        model.eval()
-        self.enable_dropout(model)
+        mean_dict = {}
+        std_dict = {}
+        modeltypes = ['conv1d', 'unet', 'lstm', 'transformer']
+        color_means = {'lstm': 'purple', 'transformer': 'r', 'conv1d': 'g', 'unet': 'b'}
+        color_stds = {'lstm': 'violet', 'transformer': 'lightcoral', 'conv1d': 'lightgreen', 'unet': 'lightblue'}
+        names_dict = {'lstm': 'LSTM', 'unet': 'U-Net', 'conv1d': 'CNN', 'transformer': 'Transformer'}
+        for modeltype in modeltypes:
+            model = self.modelLoader(modeltype)
+            model.eval()
+            self.enable_dropout(model)
 
-        dataloader = np.load(self.data_folder + "full_data.npz")['arr']
-        data = dataloader[-1]
+            dataloader = np.load(self.data_folder + "full_data.npz")['arr']
+            data = dataloader[-1]
 
-        preds_list = []
-        progress_bar = tqdm(range(runs), total=runs, desc='Monte Carlo Dropout')
-        for _ in progress_bar:
-            data = torch.Tensor(data).to(self.dtype)
-            # stack the inputs and feed as 3 channel input
-            data = data.squeeze(2)
-            if self.no_gluc:
-                input = data[:, :-2, :].to(self.dtype)
-            else:
-                input = data[:, :-1, :].to(self.dtype)
-        
-            target = data[:, -1, :]
+            preds_list = []
+            progress_bar = tqdm(range(runs), total=runs, desc='Monte Carlo Dropout')
+            for _ in progress_bar:
+                data = torch.Tensor(data).to(self.dtype)
+                # stack the inputs and feed as 3 channel input
+                data = data.squeeze(2)
+                if self.no_gluc:
+                    input = data[:, :-2, :].to(self.dtype)
+                else:
+                    input = data[:, :-1, :].to(self.dtype)
+            
+                target = data[:, -1, :]
 
-            if self.modelType == "conv1d" or self.modelType == "lstm" or self.modelType == "unet":
-                output = model(input).to(self.dtype).squeeze()
-            elif self.modelType == "transformer":
-                output = model(target, input).to(self.dtype).squeeze()
-            output_arr = ((output * self.train_std) + self.train_mean)
-            preds_list.append(output_arr[-1].detach().numpy())
-        
-        target_arr = ((target[-1] *self.train_std) + self.train_mean).detach().numpy()
-        predictions = torch.Tensor(np.array(preds_list))
-        mean_prediction = predictions.mean(dim=0)
-        uncertainty = predictions.std(dim=0)
+                if modeltype == "conv1d" or modeltype == "lstm" or modeltype == "unet":
+                    output = model(input).to(self.dtype).squeeze()
+                elif modeltype == "transformer":
+                    output = model(target, input).to(self.dtype).squeeze()
+                output_arr = ((output * self.train_std) + self.train_mean)
+                preds_list.append(output_arr[-1].detach().numpy())
+            
+            target_arr = ((target[-1] *self.train_std) + self.train_mean).detach().numpy()
+            predictions = torch.Tensor(np.array(preds_list))
+            mean_prediction = predictions.mean(dim=0)
+            uncertainty = predictions.std(dim=0)
 
-        time = np.arange(0, predictions.shape[-1], 1) * 5
+            mean_dict[modeltype] = mean_prediction
+            std_dict[modeltype] = uncertainty
 
-        mean_arr = mean_prediction.detach().numpy()
-        std_arr = uncertainty.detach().numpy()
-        lower_arr = mean_arr - std_arr
-        upper_arr = mean_arr + std_arr
+            mean_arr = mean_prediction.detach().numpy()
+            std_arr = uncertainty.detach().numpy()
+            lower_arr = mean_arr - std_arr
+            upper_arr = mean_arr + std_arr
 
-        plt.plot(time, mean_arr, color = 'blue', label='Mean', linewidth = 2)
-        plt.plot(time, target_arr, color = 'orange', label='Target', linewidth = 2)
-        plt.fill_between(time, lower_arr, upper_arr, color='skyblue', alpha=0.5, label='Uncertainty')
+            time = np.arange(0, predictions.shape[-1], 1) * 5
+
+            if modeltype != 'transformer':
+                plt.plot(time, mean_arr, color = color_means[modeltype], label=names_dict[modeltype], linewidth = 1)
+                plt.fill_between(time, lower_arr, upper_arr, color=color_stds[modeltype], alpha=0.25)
+                continue
+            plt.plot(time, mean_arr, color = color_means[modeltype], label=names_dict[modeltype], linewidth = 2)
+            plt.fill_between(time, lower_arr, upper_arr, color=color_stds[modeltype], alpha=0.5)
+
+        plt.plot(time, target_arr, color = 'black', label='Target', linewidth = 2, linestyle = '--')
 
         # Set labels and title
         plt.xlabel("Interval")
         plt.ylabel("Glucose Value (mg/dL)")
-        plt.title(f"{self.modelType} Monte Carlo Dropout")
-        plt.legend(loc = "lower left")
+        plt.title(f"Monte Carlo Dropout")
+        plt.legend(loc = "upper left")
 
         # Save the plot
-        plt.savefig(f'{self.plots_folder}{self.modelType}_mcd_plot.png')
+        plt.savefig(f'{self.plots_folder}mcd_plot.png')
         
         return mean_prediction, uncertainty, preds_list
  
@@ -413,8 +428,35 @@ class Analysis:
         plt.tight_layout()
         plt.savefig(f'{self.plots_folder}loss_plot_no_gluc.png')
 
+    def plot_lopocv(self):
+        # get lopocv loss
+        cnn_acc = np.load(self.performance_folder + "conv1d_lopocv_accs.npz")['arr']
+        unet_acc = np.load(self.performance_folder + "unet_lopocv_accs.npz")['arr']
+        lstm_acc = np.load(self.performance_folder + "lstm_lopocv_accs.npz")['arr']
+        transformer_acc = np.load(self.performance_folder + "transformer_lopocv_accs.npz")['arr']
+
+        # Additional plots for better comparison (e.g., box plot)
+        plt.figure(figsize=(10, 5))
+        box = plt.boxplot([cnn_acc, unet_acc, lstm_acc, transformer_acc], labels=['CNN', 'UNet', 'LSTM', 'Transformer'], 
+                          patch_artist = True)
+        # Define colors for each box
+        colors = ['lightblue', 'lightgreen', 'lightcoral', 'lightpink']
+        for patch, color in zip(box['boxes'], colors):
+            patch.set_facecolor(color)
+        # Set the median line color to black and make it thicker
+        for median in box['medians']:
+            median.set_color('black')
+            median.set_linewidth(2.5)
+        plt.ylabel('Accuracy (100 - MAPE)')
+        plt.title('Leave-One-Person-Out Cross Validation (LOPOCV) Accuracies')
+        plt.grid(True)
+        plt.savefig(self.plots_folder + 'lopocv_box_plot.png')
+
+
+
 if __name__ == "__main__":
     mainDir = "/media/nvme1/expansion/glycemic_health_data/physionet.org/files/big-ideas-glycemic-wearable/1.1.2/"
     # mainDir = "/Users/matthewlee/Matthew/Work/DunnLab/big-ideas-lab-glycemic-variability-and-wearable-device-data-1.1.0/"
     obj = Analysis(mainDir)
+    # obj.plot_lopocv()
     obj.monte_carlo_dropout()

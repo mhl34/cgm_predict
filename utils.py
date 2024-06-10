@@ -21,18 +21,15 @@ random.seed(42)
 # input: date
 # output: DateTime Object
 def dateParser(date):
-    mainFormat = '%Y-%m-%d %H:%M:%S.%f'
-    altFormat = '%Y-%m-%d %H:%M:%S'
-    altFormat2 = '%m/%d/%Y %H:%M'
-    try:
-        return datetime.datetime.strptime(date, mainFormat)
-    except ValueError:
+    formats = ['%Y-%m-%d %H:%M:%S.%f', '%Y-%m-%d %H:%M:%S', '%m/%d/%Y %H:%M', '%m/%d/%y %H:%M']
+    for fmt in formats:
         try:
-            return datetime.datetime.strptime(date, altFormat)
+            return datetime.datetime.strptime(date, fmt)
         except ValueError:
-            return datetime.datetime.strptime(date, altFormat2)
-    except:
-        return np.nan
+            pass
+        except TypeError:
+            pass
+    return np.nan
 
 # function: get all aggregate glucose stats accessible by dictionary
 # input: glucose values (in a time span)

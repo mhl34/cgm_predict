@@ -27,6 +27,7 @@ class runModel:
         parser.add_argument("-e", "--epochs", default=100, dest="num_epochs", help="input the number of epochs to run")
         parser.add_argument("-n", "--normalize", action='store_true', dest="normalize", help="input whether or not to normalize the input sequence")
         parser.add_argument("-k", "--k_fold", default=-1, dest="kfold", help="input whether or not to run k-fold validation")
+        parser.add_argument("-l", "--lopocv", action='store_true', dest="lopocv", help="input whether or not to perform leave-one-person-out cross validation")
         parser.add_argument("-s", "--seq_len", default=28, dest="seq_len", help="input the sequence length to analyze")
         parser.add_argument("-ng", "--no_glucose", action='store_true', dest="no_gluc", help="input whether or not to remove the glucose sample")
         args = parser.parse_args()
@@ -40,6 +41,7 @@ class runModel:
         self.normalize = args.normalize
         self.no_gluc = args.no_gluc
         self.kfold = int(args.kfold)
+        self.lopocv = args.lopocv
 
         # model parameters
         self.dropout_p = 0.5
@@ -61,7 +63,7 @@ class runModel:
 
         # lstm parameters 
         self.hidden_size = 128
-        self.num_layers = 2
+        self.num_layers = 4
 
         # transformer parameters
         self.dim_model = 1024
@@ -98,11 +100,10 @@ class runModel:
             return Conv1DModel(num_features = self.num_features, dropout_p = self.dropout_p, seq_len = self.seq_length)
         elif modelType == "lstm":
             print(f"model {modelType}")
-            return LstmModel(num_features = self.num_features, input_size = self.seq_length, hidden_size = self.hidden_size, num_layers = self.num_layers, batch_first = True, dropout_p = self.dropout_p, dtype = self.dtype)
+            return LstmModel(num_features = self.num_features, input_size = self.seq_length, hidden_size = self.hidden_size, num_layers = self.num_layers, batch_first = True, dropout_p = self.dropout_p, dtype = self.dtype, bidirectional = True)
         elif modelType == "transformer":
             print(f"model {modelType}")
             return TransformerModel(num_features = self.dim_model, num_head = self.num_head, seq_length = self.seq_length, dropout_p = self.dropout_p, norm_first = True, dtype = self.dtype, num_seqs = self.num_features, no_gluc = self.no_gluc)
-            # return TransformerModel(num_features = 1024, num_head = 256, seq_length = self.seq_length, dropout_p = self.dropout_p, norm_first = True, dtype = self.dtype)
         elif modelType == "unet":
             print(f"model {modelType}")
             return UNet(self.num_features, normalize = False, seq_len = self.seq_length, dropout = self.dropout_p)
@@ -137,7 +138,7 @@ class runModel:
         Runs the training regiment, returns the outputs of loss and accuracy for plotting if it is not running K-Fold Cross Validation
         """
         model.train()
-        best_acc = -float('inf')
+        best_loss = float('inf')
         global_loss_lst = []
         global_acc_lst = []
         for epoch in range(self.num_epochs):
@@ -183,8 +184,8 @@ class runModel:
                 accLst.append(acc_val)
             scheduler.step()
 
-            # for outVal, targetVal in zip(output_arr.detach().numpy()[-1][:-3], target_arr.detach().numpy()[-1][:-3]):
-            #     print(f"output: {outVal.item()}, target: {targetVal.item()}, difference: {(outVal.item() - targetVal.item())}")
+            for outVal, targetVal in zip(output_arr.detach().numpy()[-1][:-3], target_arr.detach().numpy()[-1][:-3]):
+                print(f"output: {outVal.item()}, target: {targetVal.item()}, difference: {(outVal.item() - targetVal.item())}")
        
             avg_loss = np.mean(lossLst)
             avg_acc  = np.mean(accLst)
@@ -194,8 +195,8 @@ class runModel:
 
             print(f"epoch {epoch + 1} training loss: {avg_loss} learning rate: {scheduler.get_last_lr()} training accuracy: {avg_acc}")
 
-            if self.kfold == -1:
-                if avg_acc > best_acc:
+            if self.kfold == -1 and not self.lopocv:
+                if avg_loss < best_loss:
                     best_acc = acc_val
                     if not os.path.exists(self.checkpoint_folder):
                         os.makedirs(self.checkpoint_folder)
@@ -205,7 +206,7 @@ class runModel:
                             'lr': self.lr}
                     torch.save(state, os.path.join(self.checkpoint_folder, f'{self.modelType}.pth' if not self.no_gluc else f'{self.modelType}_no_gluc.pth'))
         
-        if self.kfold == -1:
+        if self.kfold == -1 and not self.lopocv:
             file_path_loss = f"{self.performance_folder}{self.modelType}_loss"
             file_path_acc = f"{self.performance_folder}{self.modelType}_acc"
             np.savez(file_path_acc, arr = np.array(global_acc_lst))
@@ -249,7 +250,7 @@ class runModel:
 
             print(f"val loss: {np.mean(lossLst)} val accuracy: {np.mean(accLst)}")
 
-            if self.kfold == -1:
+            if self.kfold == -1 and not self.lopocv:
                 # create example output plot with the epoch
                 plt.clf()
                 plt.grid(True)
@@ -281,10 +282,57 @@ class runModel:
         """
         Chooses which one to run based on flags
         """
-        if self.kfold == -1:
+        if self.kfold == -1 and not self.lopocv:
             self.run_train_test()
+        elif self.kfold == -1 and self.lopocv:
+            self.run_lopocv()
         else:
             self.run_k_fold(self.kfold)
+
+    def run_lopocv(self):
+        """
+        Runs Leave-One-Person-Out Cross Validation
+        """
+        samples = [str(i).zfill(3) for i in range(1, 17)]
+
+        fold_losses = []
+        fold_accs = []
+
+        for lopo_sample in samples:
+            print(f"getting data for sample {lopo_sample}")
+            self.getData(self.data_folder, [sample for sample in samples if sample != lopo_sample], f"{lopo_sample}_left_out_data.npz")
+            self.getData(self.data_folder, [lopo_sample], f"{lopo_sample}_data.npz")
+        for sample in samples:
+            print(f"Sample {sample}")
+            model = self.modelChooser(self.modelType)
+            optimizer = optim.Adam(model.parameters(), lr = self.lr, weight_decay = self.weight_decay)
+            scheduler = CosineAnnealingLR(optimizer, T_max=self.num_epochs)
+            criterion = nn.MSELoss()
+
+            train_dataloader = np.load(self.data_folder + f"{lopo_sample}_left_out_data.npz")['arr']
+            val_dataloader = np.load(self.data_folder + f"{lopo_sample}_data.npz")['arr']
+
+            # Train the model
+            self.train(model, train_dataloader, optimizer, scheduler, criterion)
+            
+            print("============================")
+            print("Evaluating ...")
+            print("============================")
+
+            # Evaluate the model
+            val_loss, val_acc = self.evaluate(model, val_dataloader, criterion)
+            print(f'Sample {sample} - Validation Loss: {val_loss} - Validation Accuracy: {val_acc}')
+
+            fold_losses.append(val_loss)
+            fold_accs.append(val_acc)
+
+        loss_arr = np.array(fold_losses)
+        accs_arr = np.array(fold_accs)
+
+        np.savez(f"{self.performance_folder}{self.modelType}_lopocv_loss.npz", arr = loss_arr)
+        np.savez(f"{self.performance_folder}{self.modelType}_lopocv_accs.npz", arr = accs_arr)
+
+        print(f'Average Validation Loss: {np.mean(fold_losses)} - Average Validation Accuracy: {np.mean(fold_accs)}')
 
     def run_k_fold(self, folds):
         """
@@ -326,6 +374,12 @@ class runModel:
             fold_losses.append(val_loss)
             fold_accs.append(val_acc)
         
+        loss_arr = np.array(fold_losses)
+        accs_arr = np.array(fold_accs)
+
+        np.savez(f"{self.performance_folder}{self.modelType}_k_fold_loss.npz", arr = loss_arr)
+        np.savez(f"{self.performance_folder}{self.modelType}_k_fold_accs.npz", arr = accs_arr)
+
         print(f'Average Validation Loss: {np.mean(fold_losses)} - Average Validation Accuracy: {np.mean(fold_accs)}')
 
     def run_train_test(self):
@@ -341,8 +395,8 @@ class runModel:
         scheduler = CosineAnnealingLR(optimizer, T_max=self.num_epochs)
         criterion = nn.MSELoss()
 
-        self.getData(self.data_folder, trainSamples, "train_data.npz")
-        train_dataloader = np.load(self.data_folder + "train_data.npz")['arr']
+        self.getData(self.data_folder, trainSamples, "train_data_aligned.npz")
+        train_dataloader = np.load(self.data_folder + "train_data_aligned.npz")['arr']
         
         self.train(model, train_dataloader, optimizer, scheduler, criterion)
 
@@ -350,8 +404,8 @@ class runModel:
         print("Evaluating...")
         print("============================")
 
-        self.getData(self.data_folder, valSamples, "val_data.npz")
-        val_dataloader = np.load(self.data_folder + "val_data.npz")['arr']
+        self.getData(self.data_folder, valSamples, "val_data_aligned.npz")
+        val_dataloader = np.load(self.data_folder + "val_data_aligned.npz")['arr']
 
         _, _ = self.evaluate(model, val_dataloader, criterion)
     
@@ -439,5 +493,4 @@ if __name__ == "__main__":
     # mainDir = "/Users/matthewlee/Matthew/Work/DunnLab/big-ideas-lab-glycemic-variability-and-wearable-device-data-1.1.0/"
     obj = runModel(mainDir)
     # obj.run_train_test()
-    # obj.run()
-    obj.monte_carlo_dropout()
+    obj.run()
