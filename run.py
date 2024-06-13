@@ -75,7 +75,7 @@ class runModel:
 
         # early stopping parameter
         self.patience = 10
-        self.min_delta = 0.01
+        self.min_delta = 0.001
 
         # direction
         self.checkpoint_folder = "saved_models/"
@@ -421,7 +421,7 @@ class runModel:
         print("============================")
 
         _, _ = self.evaluate(model, val_dataloader, criterion)
-    
+ 
     def getData(self, save_dir, samples, file_name):
         """
         Gets the full data to perform K-Fold Cross Validation or Train-Test and stores it in a .npz file
@@ -506,4 +506,5 @@ if __name__ == "__main__":
     # mainDir = "/Users/matthewlee/Matthew/Work/DunnLab/big-ideas-lab-glycemic-variability-and-wearable-device-data-1.1.0/"
     obj = runModel(mainDir)
     # obj.run_train_test()
-    obj.run()
+    # obj.run()
+    obj.run_permutation_importance()

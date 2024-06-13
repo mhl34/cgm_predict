@@ -34,7 +34,8 @@ class TransformerModel(nn.Module):
         self.norm_first = norm_first
         self.dtype = dtype
         self.num_seqs = num_seqs
-        self.no_gluc = no_gluc
+        self.no_gluc = no_gluc,
+        self.device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
         # EMBEDDING LINEAR LAYERS
         self.embedding_gluc = nn.Linear(self.seq_length, self.num_features, dtype = self.dtype)
@@ -71,7 +72,7 @@ class TransformerModel(nn.Module):
             out = torch.cat(outputs, -1).to(self.dtype)
 
             out = F.silu(self.fc1(out))
-        
+
             tgt = self.embedding_gluc(tgt).unsqueeze(1)
             
             out = self.decoder(tgt = tgt, memory = out, tgt_mask = self.get_tgt_mask(len(tgt)))
@@ -110,4 +111,4 @@ class TransformerModel(nn.Module):
         mask = torch.tril(torch.ones(size,size) * float('-inf')).T
         for i in range(size):
             mask[i, i] = 0
-        return mask.to(self.dtype)
+        return mask.to(self.dtype).to(self.device)

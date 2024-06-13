@@ -41,6 +41,7 @@ class Analysis:
         self.normalize = args.normalize
         self.no_gluc = args.no_gluc
         self.kfold = int(args.kfold)
+        self.device = "cuda" if torch.cuda.is_available() else "cpu"
 
         # model parameters
         self.dropout_p = 0.5
@@ -98,20 +99,20 @@ class Analysis:
         """
         if modelType == "conv1d":
             print(f"model {modelType}")
-            return Conv1DModel(num_features = self.num_features, dropout_p = self.dropout_p, seq_len = self.seq_length)
+            return Conv1DModel(num_features = self.num_features, dropout_p = self.dropout_p, seq_len = self.seq_length).to(self.device)
         elif modelType == "lstm":
             print(f"model {modelType}")
-            return LstmModel(num_features = self.num_features, input_size = self.seq_length, hidden_size = self.hidden_size, num_layers = self.num_layers, batch_first = True, dropout_p = self.dropout_p, dtype = self.dtype)
+            return LstmModel(num_features = self.num_features, input_size = self.seq_length, hidden_size = self.hidden_size, num_layers = self.num_layers, batch_first = True, dropout_p = self.dropout_p, dtype = self.dtype).to(self.device)
         elif modelType == "lstm_e":
             print(f'model {modelType}')
-            return LstmEnhancedModel(hidden_size = self.hidden_size_e, num_layers = self.num_layers_e, seq_length = self.seq_length, dropout_p = self.dropout_p, norm_first = True, dtype = self.dtype, num_seqs = self.num_features, no_gluc = self.no_gluc, batch_first = True, bidirectional = True)
+            return LstmEnhancedModel(hidden_size = self.hidden_size_e, num_layers = self.num_layers_e, seq_length = self.seq_length, dropout_p = self.dropout_p, norm_first = True, dtype = self.dtype, num_seqs = self.num_features, no_gluc = self.no_gluc, batch_first = True, bidirectional = True).to(self.device)
         elif modelType == "transformer":
             print(f"model {modelType}")
-            return TransformerModel(num_features = self.dim_model, num_head = self.num_head, seq_length = self.seq_length, dropout_p = self.dropout_p, norm_first = True, dtype = self.dtype, num_seqs = self.num_features, no_gluc = self.no_gluc, bidirectional = True)
+            return TransformerModel(num_features = self.dim_model, num_head = self.num_head, seq_length = self.seq_length, dropout_p = self.dropout_p, norm_first = True, dtype = self.dtype, num_seqs = self.num_features, no_gluc = self.no_gluc, bidirectional = True).to(self.device)
             # return TransformerModel(num_features = 1024, num_head = 256, seq_length = self.seq_length, dropout_p = self.dropout_p, norm_first = True, dtype = self.dtype)
         elif modelType == "unet":
             print(f"model {modelType}")
-            return UNet(self.num_features, normalize = False, seq_len = self.seq_length, dropout = self.dropout_p)
+            return UNet(self.num_features, normalize = False, seq_len = self.seq_length, dropout = self.dropout_p).to(self.device)
         else:
             raise Exception("Invalid model type")
         
@@ -139,7 +140,7 @@ class Analysis:
         else:
             raise Exception("Invalid model type")
         model.load_state_dict(torch.load(self.checkpoint_folder + file)['state_dict'])
-        return model
+        return model.to(self.device)
 
     def enable_dropout(self, model):
         """
@@ -171,7 +172,7 @@ class Analysis:
             preds_list = []
             progress_bar = tqdm(range(runs), total=runs, desc='Monte Carlo Dropout')
             for _ in progress_bar:
-                data = torch.Tensor(data).to(self.dtype)
+                data = torch.Tensor(data).to(self.dtype).to(self.device)
                 # stack the inputs and feed as 3 channel input
                 data = data.squeeze(2)
                 if self.no_gluc:
@@ -186,9 +187,9 @@ class Analysis:
                 elif modeltype == "transformer":
                     output = model(target, input).to(self.dtype).squeeze()
                 output_arr = ((output * self.train_std) + self.train_mean)
-                preds_list.append(output_arr[-1].detach().numpy())
+                preds_list.append(output_arr[-1].cpu().detach().numpy())
             
-            target_arr = ((target[-1] *self.train_std) + self.train_mean).detach().numpy()
+            target_arr = ((target[-1] *self.train_std) + self.train_mean).cpu().detach().numpy()
             predictions = torch.Tensor(np.array(preds_list))
             mean_prediction = predictions.mean(dim=0)
             uncertainty = predictions.std(dim=0)
@@ -196,8 +197,8 @@ class Analysis:
             mean_dict[modeltype] = mean_prediction
             std_dict[modeltype] = uncertainty
 
-            mean_arr = mean_prediction.detach().numpy()
-            std_arr = uncertainty.detach().numpy()
+            mean_arr = mean_prediction.cpu().detach().numpy()
+            std_arr = uncertainty.cpu().detach().numpy()
             lower_arr = mean_arr - std_arr
             upper_arr = mean_arr + std_arr
 
@@ -225,7 +226,76 @@ class Analysis:
         plt.savefig(f'{self.plots_folder}mcd_plot.png')
         
         return mean_prediction, uncertainty, preds_list
- 
+
+    def permutation_importance(self, feature_lst):
+        """
+        Run Permutation Importance
+        """
+        model = self.modelLoader(self.modelType)
+        criterion = nn.MSELoss()
+        val_dataloader = np.load(self.data_folder + "val_data_aligned.npz")['arr']
+
+        val_losses = []
+        val_accs = []
+
+        model.eval()
+
+        for feat_idx in range(self.num_features):
+            print(f"feature {feat_idx + 1}")
+            
+            with torch.no_grad():
+                lossLst = []
+                accLst = []
+
+                for _, data in enumerate(val_dataloader):
+                    data = torch.Tensor(data).to(self.dtype).to(self.device)
+                    # stack the inputs and feed as 3 channel input
+                    data = data.squeeze(2)
+                    if self.no_gluc:
+                        input = data[:, :-2, :].to(self.dtype)
+                    else:
+                        input = data[:, :-1, :].to(self.dtype)
+
+                    indices = torch.randperm(input.size(2))
+
+                    input[:, feat_idx, :] = input[:, feat_idx, indices]
+                    # input[:, feat_idx, :] = torch.zeros_like(input[:, feat_idx, :])
+
+                    target = data[:, -1, :]
+                    
+                    if self.modelType == "conv1d" or self.modelType == "lstm" or self.modelType == "lstm_e" or self.modelType == "unet":
+                        output = model(input).to(self.dtype).squeeze()
+                    elif self.modelType == "transformer":
+                        output = model(target, input).to(self.dtype).squeeze()
+                    
+                    # loss is only calculated from the main task
+                    loss = criterion(output, target)
+
+                    lossLst.append(loss.item())
+                    output_arr = ((output * self.train_std) + self.train_mean)
+                    target_arr = ((target * self.train_std) + self.train_mean)
+                    accLst.append(1 - self.mape(output_arr, target_arr))
+
+            print(f"val loss: {np.mean(lossLst)} val accuracy: {np.mean(accLst)}")
+            val_losses.append(np.mean(lossLst))
+            val_accs.append(np.mean(accLst))
+        # Create a list of tuples (value, original_index)
+        indexed_losses = list(enumerate(val_losses))
+        indexed_accs = list(enumerate(val_accs))
+
+        # Sort the list of tuples by the values
+        indexed_losses.sort(key=lambda x: x[1], reverse=True)
+        indexed_accs.sort(key=lambda x: x[1])
+
+        # Assign ranks based on the sorted order
+        for rank, (index, value) in enumerate(indexed_losses):
+            val_losses[index] = rank + 1
+        for rank, (index, value) in enumerate(indexed_accs):
+            val_accs[index] = rank + 1
+
+        print("Ranked by Losses (Most Important to Least):", [feature_lst[i - 1] for i in val_losses])
+        print("Ranked by Accuracy (Most Important to Least):", [feature_lst[i - 1] for i in val_accs])
+
     def plot_model(self):
         """
         Model Plotting Method
@@ -233,8 +303,8 @@ class Analysis:
         samples = [str(i).zfill(3) for i in range(1, 17)]
         model = self.modelChooser(self.modelType, samples)
 
-        input = torch.randn(self.train_batch_size, self.num_features, self.seq_length).to(self.dtype)
-        target = torch.randn(self.train_batch_size, 1, self.seq_length).to(self.dtype)
+        input = torch.randn(self.train_batch_size, self.num_features, self.seq_length).to(self.dtype).to(self.device)
+        target = torch.randn(self.train_batch_size, 1, self.seq_length).to(self.dtype).to(self.device)
 
         if self.modelType == "conv1d" or self.modelType == "lstm" or self.modelType == "unet":
             output = model(input).to(self.dtype).squeeze()
@@ -285,7 +355,7 @@ class Analysis:
 
         for model_name in model_dict.keys():
             model = model_dict[model_name]
-            data = torch.Tensor(val_data).to(self.dtype)
+            data = torch.Tensor(val_data).to(self.dtype).to(self.device)
             # stack the inputs and feed as 3 channel input
             data = data.squeeze(2)
             if self.no_gluc:
@@ -334,7 +404,7 @@ class Analysis:
         }
 
         for key, value in output_dict.items():
-            plt.plot(minutes, value.detach().numpy()[-1], label = key, color=color_dict[key], linewidth = linewidth_dict[key], linestyle = linestyle_dict[key])
+            plt.plot(minutes, value.cpu().detach().numpy()[-1], label = key, color=color_dict[key], linewidth = linewidth_dict[key], linestyle = linestyle_dict[key])
 
         plt.xlabel('Time (Minutes)', fontsize=12, fontweight='bold')
         plt.ylabel('Glucose Value (mg/dL)', fontsize=12, fontweight='bold')
@@ -492,13 +562,17 @@ class Analysis:
         plt.grid(True)
         plt.savefig(self.plots_folder + 'lopocv_box_plot.png')
 
+    def mape(self, pred, target):
+        return (torch.mean(torch.div(torch.abs(target - pred), torch.abs(target)))).item()
 
 
 if __name__ == "__main__":
     mainDir = "/media/nvme1/expansion/glycemic_health_data/physionet.org/files/big-ideas-glycemic-wearable/1.1.2/"
     # mainDir = "/Users/matthewlee/Matthew/Work/DunnLab/big-ideas-lab-glycemic-variability-and-wearable-device-data-1.1.0/"
+    feature_lst = ["sugar", "carb", "min", "hba1c", "eda", "hr", "temp", "acc_x", "acc_y", "acc_z"]
     obj = Analysis(mainDir)
     # obj.plot_lopocv()
-    obj.monte_carlo_dropout()
+    # obj.monte_carlo_dropout()
     # obj.plot_performance()
-    obj.plot_output()
+    # obj.plot_output()
+    obj.permutation_importance(feature_lst)
