@@ -15,6 +15,7 @@ import seaborn as sns
 from models.Conv1DModel import Conv1DModel
 from models.LstmModel import LstmModel
 from models.TransformerModel import TransformerModel
+from models.LstmEnhancedModel import LstmEnhancedModel
 from models.UNet import UNet
 from sklearn.model_selection import KFold
 
@@ -64,10 +65,17 @@ class runModel:
         # lstm parameters 
         self.hidden_size = 128
         self.num_layers = 4
+        self.hidden_size_e = self.seq_length
+        # self.hidden_size_e = 8
+        self.num_layers_e = 8
 
         # transformer parameters
         self.dim_model = 1024
         self.num_head = 128
+
+        # early stopping parameter
+        self.patience = 10
+        self.min_delta = 0.01
 
         # direction
         self.checkpoint_folder = "saved_models/"
@@ -101,6 +109,9 @@ class runModel:
         elif modelType == "lstm":
             print(f"model {modelType}")
             return LstmModel(num_features = self.num_features, input_size = self.seq_length, hidden_size = self.hidden_size, num_layers = self.num_layers, batch_first = True, dropout_p = self.dropout_p, dtype = self.dtype, bidirectional = True)
+        elif modelType == "lstm_e":
+            print(f"model {modelType}")
+            return LstmEnhancedModel(hidden_size = self.hidden_size_e, num_layers = self.num_layers_e, seq_length = self.seq_length, dropout_p = self.dropout_p, norm_first = True, dtype = self.dtype, num_seqs = self.num_features, no_gluc = self.no_gluc, batch_first = True, bidirectional = True)
         elif modelType == "transformer":
             print(f"model {modelType}")
             return TransformerModel(num_features = self.dim_model, num_head = self.num_head, seq_length = self.seq_length, dropout_p = self.dropout_p, norm_first = True, dtype = self.dtype, num_seqs = self.num_features, no_gluc = self.no_gluc)
@@ -133,27 +144,26 @@ class runModel:
         model.load_state_dict(torch.load(self.checkpoint_folder + file)['state_dict'])
         return model
 
-    def train(self, model, train_dataloader, optimizer, scheduler, criterion):
+    def train(self, model, train_dataloader, val_dataloader, optimizer, scheduler, criterion):
         """
         Runs the training regiment, returns the outputs of loss and accuracy for plotting if it is not running K-Fold Cross Validation
         """
         model.train()
         best_loss = float('inf')
+        early_stopping_counter = 0
         global_loss_lst = []
         global_acc_lst = []
+
         for epoch in range(self.num_epochs):
-
+            model.train()
             np.random.shuffle(train_dataloader)
-
             progress_bar = tqdm(enumerate(train_dataloader), total=len(train_dataloader), desc=f'Epoch {epoch + 1}/{self.num_epochs}', unit='batch')
 
             lossLst = []
             accLst = []
-            
-            # for batch_idx, (sample, acc, sugar, carb, mins, hba1c, glucPast, glucPres) in progress_bar:
+
             for _, data in progress_bar:
-                data = torch.Tensor(data).to(self.dtype)
-                # stack the inputs and feed as 3 channel input
+                data = torch.Tensor(data).to(self.dtype).to(self.device)
                 data = data.squeeze(2)
                 if self.no_gluc:
                     input = data[:, :-2, :].to(self.dtype)
@@ -162,7 +172,7 @@ class runModel:
 
                 target = data[:, -1, :]
 
-                if self.modelType == "conv1d" or self.modelType == "lstm" or self.modelType == "unet":
+                if self.modelType in ["conv1d", "lstm", "lstm_e", "unet"]:
                     output = model(input).to(self.dtype).squeeze()
                 elif self.modelType == "transformer":
                     output = model(target, input).to(self.dtype).squeeze()
@@ -170,8 +180,8 @@ class runModel:
                 loss = criterion(output, target)
 
                 optimizer.zero_grad()
-                loss.backward(retain_graph = True)
-                nn.utils.clip_grad_norm_(model.parameters(), max_norm = 1)
+                loss.backward(retain_graph=True)
+                nn.utils.clip_grad_norm_(model.parameters(), max_norm=1)
                 optimizer.step()
 
                 lossLst.append(loss.item())
@@ -180,38 +190,42 @@ class runModel:
                 target_arr = ((target * self.train_std) + self.train_mean)
 
                 acc_val = 1 - self.mape(output_arr, target_arr)
-                
                 accLst.append(acc_val)
+
             scheduler.step()
 
-            for outVal, targetVal in zip(output_arr.detach().numpy()[-1][:-3], target_arr.detach().numpy()[-1][:-3]):
-                print(f"output: {outVal.item()}, target: {targetVal.item()}, difference: {(outVal.item() - targetVal.item())}")
-       
             avg_loss = np.mean(lossLst)
-            avg_acc  = np.mean(accLst)
+            avg_acc = np.mean(accLst)
 
             global_loss_lst.append(avg_loss)
             global_acc_lst.append(avg_acc)
 
             print(f"epoch {epoch + 1} training loss: {avg_loss} learning rate: {scheduler.get_last_lr()} training accuracy: {avg_acc}")
 
-            if self.kfold == -1 and not self.lopocv:
-                if avg_loss < best_loss:
-                    best_acc = acc_val
-                    if not os.path.exists(self.checkpoint_folder):
-                        os.makedirs(self.checkpoint_folder)
-                    print("Saving ...")
-                    state = {'state_dict': model.state_dict(),
-                            'epoch': epoch,
-                            'lr': self.lr}
-                    torch.save(state, os.path.join(self.checkpoint_folder, f'{self.modelType}.pth' if not self.no_gluc else f'{self.modelType}_no_gluc.pth'))
-        
+            val_loss, _ = self.evaluate(model, val_dataloader, criterion)
+
+            if val_loss < best_loss:
+                best_loss = val_loss
+                early_stopping_counter = 0
+                if not os.path.exists(self.checkpoint_folder):
+                    os.makedirs(self.checkpoint_folder)
+                print("Saving ...")
+                state = {'state_dict': model.state_dict(), 'epoch': epoch, 'lr': self.lr}
+                torch.save(state, os.path.join(self.checkpoint_folder, f'{self.modelType}.pth' if not self.no_gluc else f'{self.modelType}_no_gluc.pth'))
+            elif val_loss > best_loss + self.min_delta:
+                early_stopping_counter += 1
+
+            if early_stopping_counter >= self.patience:
+                print("Early stopping triggered.")
+                break
+
         if self.kfold == -1 and not self.lopocv:
             file_path_loss = f"{self.performance_folder}{self.modelType}_loss"
             file_path_acc = f"{self.performance_folder}{self.modelType}_acc"
-            np.savez(file_path_acc, arr = np.array(global_acc_lst))
-            np.savez(file_path_loss, arr = np.array(global_loss_lst))
-            
+            np.savez(file_path_acc, arr=np.array(global_acc_lst))
+            np.savez(file_path_loss, arr=np.array(global_loss_lst))
+
+        
     def evaluate(self, model, val_dataloader, criterion):
         """
         Model evaluation method, plots the outputs if it's not performing K-Fold, returns the average loss and accuracy (100 - MAPE)
@@ -219,13 +233,11 @@ class runModel:
         model.eval()
         with torch.no_grad():
             epoch = 1
-            progress_bar = tqdm(enumerate(val_dataloader), total=len(val_dataloader), desc=f'Epoch {epoch + 1}/{self.num_epochs}', unit='batch')
-                
             lossLst = []
             accLst = []
 
-            for _, data in progress_bar:
-                data = torch.Tensor(data).to(self.dtype)
+            for _, data in enumerate(val_dataloader):
+                data = torch.Tensor(data).to(self.dtype).to(self.device)
                 # stack the inputs and feed as 3 channel input
                 data = data.squeeze(2)
                 if self.no_gluc:
@@ -235,7 +247,7 @@ class runModel:
 
                 target = data[:, -1, :]
                 
-                if self.modelType == "conv1d" or self.modelType == "lstm" or self.modelType == "unet":
+                if self.modelType == "conv1d" or self.modelType == "lstm" or self.modelType == "lstm_e" or self.modelType == "unet":
                     output = model(input).to(self.dtype).squeeze()
                 elif self.modelType == "transformer":
                     output = model(target, input).to(self.dtype).squeeze()
@@ -257,10 +269,10 @@ class runModel:
                 plt.figure(figsize=(8, 6))
 
                 # Plot the target array
-                plt.plot(target_arr.detach().numpy()[-1], label='Target')
+                plt.plot(target_arr.cpu().detach().numpy()[-1], label='Target')
 
                 # Plot the output arrays (first and second arrays in the tuple)
-                plt.plot(output_arr.detach().numpy()[-1], label='Output')
+                plt.plot(output_arr.cpu().detach().numpy()[-1], label='Output')
 
                 # Add labels and legend
                 plt.xlabel('Index')
@@ -272,7 +284,9 @@ class runModel:
                 if self.no_gluc:
                     plt.savefig(f'{self.plots_folder}{self.modelType}_output_no_gluc.png')
                 else:
-                    plt.savefig(f'{self.plots_folder}{self.modelType}_output.png') 
+                    plt.savefig(f'{self.plots_folder}{self.modelType}_output.png')
+
+                plt.close()
         return np.mean(lossLst), np.mean(accLst)           
 
     def mape(self, pred, target):
@@ -304,7 +318,7 @@ class runModel:
             self.getData(self.data_folder, [lopo_sample], f"{lopo_sample}_data.npz")
         for sample in samples:
             print(f"Sample {sample}")
-            model = self.modelChooser(self.modelType)
+            model = self.modelChooser(self.modelType).to(self.device)
             optimizer = optim.Adam(model.parameters(), lr = self.lr, weight_decay = self.weight_decay)
             scheduler = CosineAnnealingLR(optimizer, T_max=self.num_epochs)
             criterion = nn.MSELoss()
@@ -313,7 +327,7 @@ class runModel:
             val_dataloader = np.load(self.data_folder + f"{lopo_sample}_data.npz")['arr']
 
             # Train the model
-            self.train(model, train_dataloader, optimizer, scheduler, criterion)
+            self.train(model, train_dataloader, val_dataloader, optimizer, scheduler, criterion)
             
             print("============================")
             print("Evaluating ...")
@@ -355,13 +369,13 @@ class runModel:
             print(f'Fold {fold}')
 
             train_dataloader, val_dataloader = full_dataloader[train_index], full_dataloader[val_index]
-            model = self.modelChooser(self.modelType)
+            model = self.modelChooser(self.modelType).to(self.device)
             optimizer = optim.Adam(model.parameters(), lr = self.lr, weight_decay = self.weight_decay)
             scheduler = CosineAnnealingLR(optimizer, T_max=self.num_epochs)
             criterion = nn.MSELoss()
 
             # Train the model
-            self.train(model, train_dataloader, optimizer, scheduler, criterion)
+            self.train(model, train_dataloader, val_dataloader, optimizer, scheduler, criterion)
             
             print("============================")
             print("Evaluating Fold...")
@@ -390,22 +404,21 @@ class runModel:
         trainSamples = samples[:-4]
         valSamples = samples[-4:]
 
-        model = self.modelChooser(self.modelType)
+        model = self.modelChooser(self.modelType).to(self.device)
         optimizer = optim.Adam(model.parameters(), lr = self.lr, weight_decay = self.weight_decay)
         scheduler = CosineAnnealingLR(optimizer, T_max=self.num_epochs)
         criterion = nn.MSELoss()
 
         self.getData(self.data_folder, trainSamples, "train_data_aligned.npz")
         train_dataloader = np.load(self.data_folder + "train_data_aligned.npz")['arr']
+        self.getData(self.data_folder, valSamples, "val_data_aligned.npz")
+        val_dataloader = np.load(self.data_folder + "val_data_aligned.npz")['arr']
         
-        self.train(model, train_dataloader, optimizer, scheduler, criterion)
+        self.train(model, train_dataloader, val_dataloader, optimizer, scheduler, criterion)
 
         print("============================")
         print("Evaluating...")
         print("============================")
-
-        self.getData(self.data_folder, valSamples, "val_data_aligned.npz")
-        val_dataloader = np.load(self.data_folder + "val_data_aligned.npz")['arr']
 
         _, _ = self.evaluate(model, val_dataloader, criterion)
     
@@ -480,7 +493,7 @@ class runModel:
             # stack the inputs and feed as 3 channel input
             if data.shape[0] < self.train_batch_size:
                 continue
-            data_list.append(data.detach().numpy())
+            data_list.append(data.cpu().detach().numpy())
 
         data_np_arr = np.array(data_list)
 

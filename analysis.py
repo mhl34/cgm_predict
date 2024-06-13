@@ -16,6 +16,7 @@ from models.Conv1DModel import Conv1DModel
 from models.LstmModel import LstmModel
 from models.TransformerModel import TransformerModel
 from models.UNet import UNet
+from models.LstmEnhancedModel import LstmEnhancedModel
 from sklearn.model_selection import KFold
 
 sns.set_theme()
@@ -62,6 +63,8 @@ class Analysis:
         # lstm parameters 
         self.hidden_size = 128
         self.num_layers = 4
+        self.hidden_size_e = self.seq_length
+        self.num_layers_e = 3
 
         # transformer parameters
         self.dim_model = 1024
@@ -99,6 +102,9 @@ class Analysis:
         elif modelType == "lstm":
             print(f"model {modelType}")
             return LstmModel(num_features = self.num_features, input_size = self.seq_length, hidden_size = self.hidden_size, num_layers = self.num_layers, batch_first = True, dropout_p = self.dropout_p, dtype = self.dtype)
+        elif modelType == "lstm_e":
+            print(f'model {modelType}')
+            return LstmEnhancedModel(hidden_size = self.hidden_size_e, num_layers = self.num_layers_e, seq_length = self.seq_length, dropout_p = self.dropout_p, norm_first = True, dtype = self.dtype, num_seqs = self.num_features, no_gluc = self.no_gluc, batch_first = True, bidirectional = True)
         elif modelType == "transformer":
             print(f"model {modelType}")
             return TransformerModel(num_features = self.dim_model, num_head = self.num_head, seq_length = self.seq_length, dropout_p = self.dropout_p, norm_first = True, dtype = self.dtype, num_seqs = self.num_features, no_gluc = self.no_gluc, bidirectional = True)
@@ -121,6 +127,9 @@ class Analysis:
         elif modelType == "lstm":
             print(f"model {modelType}")
             model = LstmModel(num_features = self.num_features, input_size = self.seq_length, hidden_size = self.hidden_size, num_layers = self.num_layers, batch_first = True, dropout_p = self.dropout_p, dtype = self.dtype, bidirectional = True)
+        elif modelType == "lstm_e":
+            print(f"model {modelType}")
+            model = LstmEnhancedModel(hidden_size = self.hidden_size_e, num_layers = self.num_layers_e, seq_length = self.seq_length, dropout_p = self.dropout_p, norm_first = True, dtype = self.dtype, num_seqs = self.num_features, no_gluc = self.no_gluc, batch_first = True, bidirectional = True)
         elif modelType == "transformer":
             print(f"model {modelType}")
             model = TransformerModel(num_features = self.dim_model, num_head = self.num_head, seq_length = self.seq_length, dropout_p = self.dropout_p, norm_first = True, dtype = self.dtype, num_seqs = self.num_features, no_gluc = self.no_gluc)
@@ -137,7 +146,8 @@ class Analysis:
         Enable just the dropout for the monte carlo dropout simulation
         """
         for m in model.modules():
-            if m.__class__.__name__.startswith('Dropout'):
+            name = m.__class__.__name__
+            if name.startswith('Dropout'):
                 m.train()
 
     def monte_carlo_dropout(self, runs = 100):
@@ -146,16 +156,16 @@ class Analysis:
         """
         mean_dict = {}
         std_dict = {}
-        modeltypes = ['conv1d', 'unet', 'lstm', 'transformer']
-        color_means = {'lstm': 'purple', 'transformer': 'r', 'conv1d': 'g', 'unet': 'b'}
-        color_stds = {'lstm': 'violet', 'transformer': 'lightcoral', 'conv1d': 'lightgreen', 'unet': 'lightblue'}
-        names_dict = {'lstm': 'LSTM', 'unet': 'U-Net', 'conv1d': 'CNN', 'transformer': 'Transformer'}
+        modeltypes = ['conv1d', 'unet', 'lstm_e', 'transformer']
+        color_means = {'lstm_e': 'purple', 'transformer': 'r', 'conv1d': 'g', 'unet': 'b'}
+        color_stds = {'lstm_e': 'violet', 'transformer': 'lightcoral', 'conv1d': 'lightgreen', 'unet': 'lightblue'}
+        names_dict = {'lstm_e': 'LSTM', 'unet': 'U-Net', 'conv1d': 'CNN', 'transformer': 'Transformer'}
         for modeltype in modeltypes:
             model = self.modelLoader(modeltype)
-            model.eval()
-            self.enable_dropout(model)
+            model.train()
+            # self.enable_dropout(model)
 
-            dataloader = np.load(self.data_folder + "full_data.npz")['arr']
+            dataloader = np.load(self.data_folder + "val_data_aligned.npz")['arr']
             data = dataloader[-1]
 
             preds_list = []
@@ -203,10 +213,13 @@ class Analysis:
         plt.plot(time, target_arr, color = 'black', label='Target', linewidth = 2, linestyle = '--')
 
         # Set labels and title
-        plt.xlabel("Interval")
-        plt.ylabel("Glucose Value (mg/dL)")
-        plt.title(f"Monte Carlo Dropout")
-        plt.legend(loc = "upper left", prop={'size': 8})
+        plt.xlabel("Interval", fontsize=12, fontweight='bold')
+        plt.ylabel("Glucose Value (mg/dL)", fontsize=12, fontweight='bold')
+        plt.title(f"Monte Carlo Dropout", fontsize=14, fontweight='bold')
+
+        plt.gca().set_facecolor('white')
+        plt.grid(True, color='grey', linestyle='--')
+        plt.legend(loc = "upper left", prop={'size': 12})
 
         # Save the plot
         plt.savefig(f'{self.plots_folder}mcd_plot.png')
@@ -245,17 +258,18 @@ class Analysis:
         Plotting the outputs of the models onto a saved graph
         """
         # to get normalization calculations
-        self.getTrainData(self.data_folder)
+        # self.getTrainData(self.data_folder)
         
         samples = [str(i).zfill(3) for i in range(1, 17)]
         conv1d = Conv1DModel(num_features = self.num_features, dropout_p = self.dropout_p, seq_len = self.seq_length)
-        lstm = LstmModel(num_features = self.num_features, input_size = self.seq_length, hidden_size = self.hidden_size, num_layers = self.num_layers, batch_first = True, dropout_p = self.dropout_p, dtype = self.dtype)
+        # lstm = LstmModel(num_features = self.num_features, input_size = self.seq_length, hidden_size = self.hidden_size, num_layers = self.num_layers, batch_first = True, dropout_p = self.dropout_p, dtype = self.dtype)
+        lstm = LstmEnhancedModel(hidden_size = self.hidden_size_e, num_layers = self.num_layers_e, seq_length = self.seq_length, dropout_p = self.dropout_p, norm_first = True, dtype = self.dtype, num_seqs = self.num_features, no_gluc = self.no_gluc, batch_first = True, bidirectional = True)
         transformer = TransformerModel(num_features = self.dim_model, num_head = self.num_head, seq_length = self.seq_length, dropout_p = self.dropout_p, norm_first = True, dtype = self.dtype, num_seqs = self.num_features, no_gluc = self.no_gluc)
         unet = UNet(self.num_features, normalize = False, seq_len = self.seq_length)
 
         if self.no_gluc:
             conv1d.load_state_dict(torch.load(self.checkpoint_folder + "conv1d_no_gluc.pth")['state_dict'])
-            lstm.load_state_dict(torch.load(self.checkpoint_folder + "lstm_no_gluc.pth")['state_dict'])
+            lstm.load_state_dict(torch.load(self.checkpoint_folder + "lstm_e_no_gluc.pth")['state_dict'])
             transformer.load_state_dict(torch.load(self.checkpoint_folder + "transformer_no_gluc.pth")['state_dict'])
             unet.load_state_dict(torch.load(self.checkpoint_folder + "unet_no_gluc.pth")['state_dict'])
         else:
@@ -391,7 +405,7 @@ class Analysis:
         }
 
         plt.clf()
-        plt.figure(figsize=(8, 6))
+        # plt.figure(figsize=(8, 6))
         plt.gca().set_facecolor('white')
         plt.grid(True, color='grey', linestyle='--')
         for key, val in performance_dict.items():
@@ -408,7 +422,7 @@ class Analysis:
         plt.savefig(f'{self.plots_folder}accuracy_plot_no_gluc.png')
 
         plt.clf()
-        plt.figure(figsize=(8, 6))
+        # plt.figure(figsize=(8, 6))
         plt.gca().set_facecolor('white')
         plt.grid(True, color='grey', linestyle='--')
         for key, val in performance_dict.items():
@@ -429,6 +443,35 @@ class Analysis:
         unet_acc = np.load(self.performance_folder + "unet_lopocv_accs.npz")['arr']
         lstm_acc = np.load(self.performance_folder + "lstm_lopocv_accs.npz")['arr']
         transformer_acc = np.load(self.performance_folder + "transformer_lopocv_accs.npz")['arr']
+
+        performance_dict = {
+            'cnn': {
+                'mean': cnn_acc.mean().item(),
+                'std': cnn_acc.std().item(),
+                'min': cnn_acc.min().item(),
+                'max': cnn_acc.max().item()
+            },
+            'unet': {
+                'mean': unet_acc.mean().item(),
+                'std': unet_acc.std().item(), 
+                'min': unet_acc.min().item(),
+                'max': unet_acc.max().item()
+            },
+            'lstm': {
+                'mean': lstm_acc.mean().item(),
+                'std': lstm_acc.std().item(),
+                'min': lstm_acc.min().item(),
+                'max': lstm_acc.max().item()
+            }, 
+            'transformer': {
+                'mean': transformer_acc.mean().item(),
+                'std': transformer_acc.std().item(),
+                'min': transformer_acc.min().item(),
+                'max': transformer_acc.max().item()
+            }
+        }
+
+        print(performance_dict)
 
         # Additional plots for better comparison (e.g., box plot)
         accs_lst = [cnn_acc, unet_acc, lstm_acc, transformer_acc]
@@ -455,5 +498,7 @@ if __name__ == "__main__":
     mainDir = "/media/nvme1/expansion/glycemic_health_data/physionet.org/files/big-ideas-glycemic-wearable/1.1.2/"
     # mainDir = "/Users/matthewlee/Matthew/Work/DunnLab/big-ideas-lab-glycemic-variability-and-wearable-device-data-1.1.0/"
     obj = Analysis(mainDir)
-    obj.plot_performance()
-    # obj.monte_carlo_dropout()
+    # obj.plot_lopocv()
+    obj.monte_carlo_dropout()
+    # obj.plot_performance()
+    obj.plot_output()
