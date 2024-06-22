@@ -16,7 +16,6 @@ import seaborn as sns
 from models.Conv1DModel import Conv1DModel
 from models.LstmModel import LstmModel
 from models.TransformerModel import TransformerModel
-from models.LstmEnhancedModel import LstmEnhancedModel
 from models.UNet import UNet
 from sklearn.model_selection import KFold
 from sklearn.preprocessing import StandardScaler
@@ -37,7 +36,8 @@ class runModel:
         self.modelType = args.modelType
         self.dtype = torch.double if self.modelType == "conv1d" else torch.float64
         self.mainDir = mainDir
-        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        # self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        self.device = 'cpu'
         self.max_norm = 1
         self.seq_length = int(args.seq_len)
         self.num_epochs = int(args.num_epochs)

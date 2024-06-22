@@ -16,7 +16,6 @@ from models.Conv1DModel import Conv1DModel
 from models.LstmModel import LstmModel
 from models.TransformerModel import TransformerModel
 from models.UNet import UNet
-from models.LstmEnhancedModel import LstmEnhancedModel
 from sklearn.model_selection import KFold
 from run import runModel
 
@@ -216,12 +215,6 @@ class Analysis(runModel):
                             output_arr = ((output * self.train_std) + self.train_mean)
                             target_arr = ((target * self.train_std) + self.train_mean)
                             accLst.append(1 - self.mape(output_arr, target_arr))
-
-                            # plt.plot(output_arr[-1].cpu().detach().numpy())
-                            # plt.plot(target_arr[-1].cpu().detach().numpy())
-                            # plt.savefig(self.plots_folder + "permutation_importance.png")
-                            # plt.close()
-                            # exit()
 
                     # print(f"val loss: {np.mean(lossLst)} val accuracy: {np.mean(accLst)}")
                     losses_dict[feature] += np.mean(lossLst)
@@ -528,6 +521,6 @@ if __name__ == "__main__":
     obj = Analysis(mainDir)
     # obj.plot_lopocv()
     # obj.monte_carlo_dropout()
-    obj.plot_performance()
+    # obj.plot_performance()
     # obj.plot_output()
-    # obj.feature_ablation(feature_lst)
+    obj.feature_ablation(feature_lst)

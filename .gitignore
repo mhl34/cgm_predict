@@ -4,7 +4,7 @@ plots/
 saved_models/
 model_arch/
 performance/
-models/__pycache__
+models/__pycache__/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
