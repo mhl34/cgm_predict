@@ -1,4 +1,5 @@
 import torch
+torch.cuda.empty_cache()
 import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader
@@ -18,6 +19,7 @@ from models.TransformerModel import TransformerModel
 from models.LstmEnhancedModel import LstmEnhancedModel
 from models.UNet import UNet
 from sklearn.model_selection import KFold
+from sklearn.preprocessing import StandardScaler
 
 sns.set_theme()
 
@@ -47,8 +49,9 @@ class runModel:
         # model parameters
         self.dropout_p = 0.5
         self.domain_lambda = 0.01
-        self.train_batch_size = 32
-        self.val_batch_size = 32
+        self.batch_size = 32
+        self.train_batch_size = self.batch_size
+        self.val_batch_size = self.batch_size
         self.num_features = 11
         self.num_features = self.num_features - 1 if self.no_gluc else self.num_features
         self.lr = 1e-3
@@ -63,19 +66,20 @@ class runModel:
         self.eps = 1e-12
 
         # lstm parameters 
-        self.hidden_size = 128
-        self.num_layers = 4
+        self.hidden_size = self.seq_length
+        self.num_layers = 8
         self.hidden_size_e = self.seq_length
         # self.hidden_size_e = 8
-        self.num_layers_e = 8
+        self.num_layers_e = 4
+        self.bidirectional = False
 
         # transformer parameters
-        self.dim_model = 1024
-        self.num_head = 128
+        self.dim_model = 128
+        self.num_head = self.seq_length
 
         # early stopping parameter
-        self.patience = 10
-        self.min_delta = 0.01
+        self.patience = 20
+        self.min_delta = 0.001
 
         # direction
         self.checkpoint_folder = "saved_models/"
@@ -88,6 +92,9 @@ class runModel:
         self.check_dir(self.performance_folder)
         self.plots_folder = "plots/"
         self.check_dir(self.plots_folder)
+
+        # EOS and SOS tokens
+        self.sos_token = 0
 
     def check_dir(self, folder_path):
         """
@@ -108,10 +115,10 @@ class runModel:
             return Conv1DModel(num_features = self.num_features, dropout_p = self.dropout_p, seq_len = self.seq_length)
         elif modelType == "lstm":
             print(f"model {modelType}")
-            return LstmModel(num_features = self.num_features, input_size = self.seq_length, hidden_size = self.hidden_size, num_layers = self.num_layers, batch_first = True, dropout_p = self.dropout_p, dtype = self.dtype, bidirectional = True)
+            return LstmModel(num_features = self.num_features, input_size = self.seq_length, hidden_size = self.hidden_size, num_layers = self.num_layers, batch_first = True, dropout_p = self.dropout_p, dtype = self.dtype, bidirectional = self.bidirectional)
         elif modelType == "lstm_e":
             print(f"model {modelType}")
-            return LstmEnhancedModel(hidden_size = self.hidden_size_e, num_layers = self.num_layers_e, seq_length = self.seq_length, dropout_p = self.dropout_p, norm_first = True, dtype = self.dtype, num_seqs = self.num_features, no_gluc = self.no_gluc, batch_first = True, bidirectional = True)
+            return LstmEnhancedModel(hidden_size = self.hidden_size_e, num_layers = self.num_layers_e, seq_length = self.seq_length, dropout_p = self.dropout_p, norm_first = True, dtype = self.dtype, num_seqs = self.num_features, no_gluc = self.no_gluc, batch_first = True, bidirectional = self.bidirectional)
         elif modelType == "transformer":
             print(f"model {modelType}")
             return TransformerModel(num_features = self.dim_model, num_head = self.num_head, seq_length = self.seq_length, dropout_p = self.dropout_p, norm_first = True, dtype = self.dtype, num_seqs = self.num_features, no_gluc = self.no_gluc)
@@ -153,7 +160,6 @@ class runModel:
         early_stopping_counter = 0
         global_loss_lst = []
         global_acc_lst = []
-
         for epoch in range(self.num_epochs):
             model.train()
             np.random.shuffle(train_dataloader)
@@ -175,7 +181,10 @@ class runModel:
                 if self.modelType in ["conv1d", "lstm", "lstm_e", "unet"]:
                     output = model(input).to(self.dtype).squeeze()
                 elif self.modelType == "transformer":
-                    output = model(target, input).to(self.dtype).squeeze()
+                    sos_token = torch.ones(self.train_batch_size, 1).to(self.dtype).to(self.device) * self.sos_token
+                    tgt = target
+                    tgt = torch.cat((sos_token, tgt[:, :-1]), dim=1)
+                    output = model(tgt, input).to(self.dtype).squeeze()
 
                 loss = criterion(output, target)
 
@@ -197,12 +206,11 @@ class runModel:
             avg_loss = np.mean(lossLst)
             avg_acc = np.mean(accLst)
 
-            global_loss_lst.append(avg_loss)
-            global_acc_lst.append(avg_acc)
-
             print(f"epoch {epoch + 1} training loss: {avg_loss} learning rate: {scheduler.get_last_lr()} training accuracy: {avg_acc}")
 
-            val_loss, _ = self.evaluate(model, val_dataloader, criterion)
+            val_loss, val_acc = self.evaluate(model, val_dataloader, criterion)
+            global_loss_lst.append(val_loss)
+            global_acc_lst.append(val_acc)
 
             if val_loss < best_loss:
                 best_loss = val_loss
@@ -250,7 +258,10 @@ class runModel:
                 if self.modelType == "conv1d" or self.modelType == "lstm" or self.modelType == "lstm_e" or self.modelType == "unet":
                     output = model(input).to(self.dtype).squeeze()
                 elif self.modelType == "transformer":
-                    output = model(target, input).to(self.dtype).squeeze()
+                    sos_token = torch.ones(self.train_batch_size, 1).to(self.dtype).to(self.device) * self.sos_token
+                    tgt = target
+                    tgt = torch.cat((sos_token, tgt[:, :-1]), dim=1)
+                    output = model(tgt, input).to(self.dtype).squeeze()
                 
                 # loss is only calculated from the main task
                 loss = criterion(output, target)
@@ -287,6 +298,10 @@ class runModel:
                     plt.savefig(f'{self.plots_folder}{self.modelType}_output.png')
 
                 plt.close()
+                for outVal, targetVal in zip(output[-1][-5:], target[-1][-5:]):
+                    print(f"output: {(outVal.item() * self.train_std) + self.train_mean}, target: {(targetVal.item() * self.train_std) + self.train_mean}, difference: {((outVal.item() - targetVal.item()) * self.train_std) + self.train_mean}")
+             
+
         return np.mean(lossLst), np.mean(accLst)           
 
     def mape(self, pred, target):
@@ -421,7 +436,7 @@ class runModel:
         print("============================")
 
         _, _ = self.evaluate(model, val_dataloader, criterion)
-    
+ 
     def getData(self, save_dir, samples, file_name):
         """
         Gets the full data to perform K-Fold Cross Validation or Train-Test and stores it in a .npz file

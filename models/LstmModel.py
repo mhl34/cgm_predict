@@ -16,20 +16,32 @@ class LstmModel(nn.Module):
         self.dtype = dtype
         self.seq_len = seq_len
         self.bidirectional = bidirectional
-        self.lstm_encoder = nn.LSTM(input_size = self.num_features, hidden_size = self.hidden_size, num_layers = self.num_layers, batch_first = self.batch_first, dropout = self.dropout_p, dtype = self.dtype, bidirectional = self.bidirectional)
-        self.batch_norm = nn.BatchNorm1d(self.hidden_size * 2 if self.bidirectional else self.hidden_size, dtype = self.dtype)
-        self.fc1 = nn.Linear(self.hidden_size * 2 if self.bidirectional else self.hidden_size, 64, dtype = self.dtype)
+        self.hidden_size = self.hidden_size * 2 if self.bidirectional else self.hidden_size
+        self.lstm_encoder = nn.LSTM(input_size = self.seq_len, hidden_size = self.hidden_size, num_layers = self.num_layers, batch_first = self.batch_first, dropout = self.dropout_p, dtype = self.dtype, bidirectional = self.bidirectional)
+        self.batch_norm1 = nn.BatchNorm1d(self.seq_len, dtype = self.dtype)
+        self.batch_norm2 = nn.BatchNorm1d(self.hidden_size, dtype = self.dtype)
+        # self.batch_norm = nn.BatchNorm1d(self.seq_len, dtype = self.dtype)
+        self.fc1 = nn.Linear(self.hidden_size, 64, dtype = self.dtype)
         self.fc2 = nn.Linear(64, self.input_size, dtype = self.dtype)
         self.dropout = nn.Dropout(self.dropout_p)
+        self.device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
         # Initialize weights
         self._initialize_weights()
         
     def forward(self, x):
-        x = x.permute(0,2,1)
-        out, _ = self.lstm_encoder(x)
-        out = self.batch_norm(out[:, -1, :])
-        out = F.silu(self.fc1(self.dropout(out)))
+        dim1 = self.num_layers * 2 if self.bidirectional else self.num_layers
+        h0 = torch.zeros(dim1, x.size(0), self.hidden_size).to(self.device).to(self.dtype)
+        c0 = torch.zeros(dim1, x.size(0), self.hidden_size).to(self.device).to(self.dtype)
+        batch_size, _, _ = x.shape
+        x = x.reshape(batch_size * self.num_features, self.seq_len)
+        x = self.batch_norm1(x)
+        x = x.reshape(batch_size, self.num_features, self.seq_len)
+        output, (hn, cn) = self.lstm_encoder(x, (h0, c0))
+        hn = hn.permute(1,0,2)
+        hn_out = hn[:, -1, :]
+        hn_out = (hn_out - hn.mean()) / hn.std()
+        out = F.silu(self.fc1(self.dropout(hn_out)))
         out = self.fc2(self.dropout(out))
         return out
     
