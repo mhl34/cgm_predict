@@ -55,7 +55,7 @@ class LstmEnhancedModel(nn.Module):
         self.fc2 = nn.Linear(self.hidden_size, 64, dtype=self.dtype)
         self.fc3 = nn.Linear(64, self.seq_length, dtype=self.dtype)
 
-        self.batch_norm = nn.BatchNorm1d(self.seq_length, dtype=self.dtype)
+        self.batch_norm = nn.BatchNorm1d(1, dtype=self.dtype)
 
     # function: forward of model
     # input: src

@@ -18,81 +18,11 @@ from models.TransformerModel import TransformerModel
 from models.UNet import UNet
 from models.LstmEnhancedModel import LstmEnhancedModel
 from sklearn.model_selection import KFold
+from run import runModel
 
 sns.set_theme()
 
-class Analysis:
-    def __init__(self, mainDir):
-        parser = argparse.ArgumentParser()
-        parser.add_argument("-m", "--modelType", dest="modelType", help="input the type of model you want to use")
-        parser.add_argument("-e", "--epochs", default=100, dest="num_epochs", help="input the number of epochs to run")
-        parser.add_argument("-n", "--normalize", action='store_true', dest="normalize", help="input whether or not to normalize the input sequence")
-        parser.add_argument("-k", "--k_fold", default=-1, dest="kfold", help="input whether or not to run k-fold validation")
-        parser.add_argument("-s", "--seq_len", default=28, dest="seq_len", help="input the sequence length to analyze")
-        parser.add_argument("-ng", "--no_glucose", action='store_true', dest="no_gluc", help="input whether or not to remove the glucose sample")
-        args = parser.parse_args()
-        self.modelType = args.modelType
-        self.dtype = torch.double if self.modelType == "conv1d" else torch.float64
-        self.mainDir = mainDir
-        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-        self.max_norm = 1
-        self.seq_length = int(args.seq_len)
-        self.num_epochs = int(args.num_epochs)
-        self.normalize = args.normalize
-        self.no_gluc = args.no_gluc
-        self.kfold = int(args.kfold)
-        self.device = "cuda" if torch.cuda.is_available() else "cpu"
-
-        # model parameters
-        self.dropout_p = 0.5
-        self.domain_lambda = 0.01
-        self.train_batch_size = 32
-        self.val_batch_size = 32
-        self.num_features = 11
-        self.num_features = self.num_features - 1 if self.no_gluc else self.num_features
-        self.lr = 1e-3
-        self.weight_decay = 1e-8
-
-        # normalization
-        samples = [str(i).zfill(3) for i in range(1, 17)]
-        dataProcessor = DataProcessor(samples, self.mainDir)
-        glucoseData = dataProcessor.loadData(samples, "dexcom")
-        self.train_mean = glucoseData['mean']
-        self.train_std = glucoseData['std']
-        self.eps = 1e-12
-
-        # lstm parameters 
-        self.hidden_size = 128
-        self.num_layers = 4
-        self.hidden_size_e = self.seq_length
-        self.num_layers_e = 3
-
-        # transformer parameters
-        self.dim_model = 1024
-        self.num_head = 128
-
-        # direction
-        self.checkpoint_folder = "saved_models/"
-        self.check_dir(self.checkpoint_folder)
-        self.data_folder = "data/"
-        self.check_dir(self.data_folder)
-        self.model_folder = "model_arch/"
-        self.check_dir(self.model_folder)
-        self.performance_folder = "performance/"
-        self.check_dir(self.performance_folder)
-        self.plots_folder = "plots/"
-        self.check_dir(self.plots_folder)
-
-    def check_dir(self, folder_path):
-        """
-        Ensures all of the directories are created locally for saving
-        """
-        if not os.path.exists(folder_path):
-            os.makedirs(folder_path)
-            print(f"Directory '{folder_path}' created.")
-        else:
-            print(f"Directory '{folder_path}' already exists.")
-
+class Analysis(runModel):
     def modelChooser(self, modelType):
         """
         Selects the model based on specified args
@@ -105,10 +35,10 @@ class Analysis:
             return LstmModel(num_features = self.num_features, input_size = self.seq_length, hidden_size = self.hidden_size, num_layers = self.num_layers, batch_first = True, dropout_p = self.dropout_p, dtype = self.dtype).to(self.device)
         elif modelType == "lstm_e":
             print(f'model {modelType}')
-            return LstmEnhancedModel(hidden_size = self.hidden_size_e, num_layers = self.num_layers_e, seq_length = self.seq_length, dropout_p = self.dropout_p, norm_first = True, dtype = self.dtype, num_seqs = self.num_features, no_gluc = self.no_gluc, batch_first = True, bidirectional = True).to(self.device)
+            return LstmEnhancedModel(hidden_size = self.hidden_size_e, num_layers = self.num_layers_e, seq_length = self.seq_length, dropout_p = self.dropout_p, norm_first = True, dtype = self.dtype, num_seqs = self.num_features, no_gluc = self.no_gluc, batch_first = True, bidirectional = self.bidirectional).to(self.device)
         elif modelType == "transformer":
             print(f"model {modelType}")
-            return TransformerModel(num_features = self.dim_model, num_head = self.num_head, seq_length = self.seq_length, dropout_p = self.dropout_p, norm_first = True, dtype = self.dtype, num_seqs = self.num_features, no_gluc = self.no_gluc, bidirectional = True).to(self.device)
+            return TransformerModel(num_features = self.dim_model, num_head = self.num_head, seq_length = self.seq_length, dropout_p = self.dropout_p, norm_first = True, dtype = self.dtype, num_seqs = self.num_features, no_gluc = self.no_gluc, bidirectional = self.bidirectional).to(self.device)
             # return TransformerModel(num_features = 1024, num_head = 256, seq_length = self.seq_length, dropout_p = self.dropout_p, norm_first = True, dtype = self.dtype)
         elif modelType == "unet":
             print(f"model {modelType}")
@@ -127,10 +57,10 @@ class Analysis:
             model = Conv1DModel(num_features = self.num_features, dropout_p = self.dropout_p, seq_len = self.seq_length)
         elif modelType == "lstm":
             print(f"model {modelType}")
-            model = LstmModel(num_features = self.num_features, input_size = self.seq_length, hidden_size = self.hidden_size, num_layers = self.num_layers, batch_first = True, dropout_p = self.dropout_p, dtype = self.dtype, bidirectional = True)
+            model = LstmModel(num_features = self.num_features, input_size = self.seq_length, hidden_size = self.hidden_size, num_layers = self.num_layers, batch_first = True, dropout_p = self.dropout_p, dtype = self.dtype, bidirectional = self.bidirectional)
         elif modelType == "lstm_e":
             print(f"model {modelType}")
-            model = LstmEnhancedModel(hidden_size = self.hidden_size_e, num_layers = self.num_layers_e, seq_length = self.seq_length, dropout_p = self.dropout_p, norm_first = True, dtype = self.dtype, num_seqs = self.num_features, no_gluc = self.no_gluc, batch_first = True, bidirectional = True)
+            model = LstmEnhancedModel(hidden_size = self.hidden_size_e, num_layers = self.num_layers_e, seq_length = self.seq_length, dropout_p = self.dropout_p, norm_first = True, dtype = self.dtype, num_seqs = self.num_features, no_gluc = self.no_gluc, batch_first = True, bidirectional = self.bidirectional)
         elif modelType == "transformer":
             print(f"model {modelType}")
             model = TransformerModel(num_features = self.dim_model, num_head = self.num_head, seq_length = self.seq_length, dropout_p = self.dropout_p, norm_first = True, dtype = self.dtype, num_seqs = self.num_features, no_gluc = self.no_gluc)
@@ -155,99 +85,24 @@ class Analysis:
         """
         Uncertainty estimation using Monte Carlo dropout
         """
-        mean_dict = {}
-        std_dict = {}
-        modeltypes = ['conv1d', 'unet', 'lstm_e', 'transformer']
-        color_means = {'lstm_e': 'purple', 'transformer': 'r', 'conv1d': 'g', 'unet': 'b'}
-        color_stds = {'lstm_e': 'violet', 'transformer': 'lightcoral', 'conv1d': 'lightgreen', 'unet': 'lightblue'}
-        names_dict = {'lstm_e': 'LSTM', 'unet': 'U-Net', 'conv1d': 'CNN', 'transformer': 'Transformer'}
-        for modeltype in modeltypes:
-            model = self.modelLoader(modeltype)
-            model.train()
-            # self.enable_dropout(model)
+        with torch.no_grad():
+            mean_dict = {}
+            std_dict = {}
+            modeltypes = ['conv1d', 'unet', 'lstm', 'transformer']
+            color_means = {'lstm': 'purple', 'transformer': 'r', 'conv1d': 'g', 'unet': 'b'}
+            color_stds = {'lstm': 'violet', 'transformer': 'lightcoral', 'conv1d': 'lightgreen', 'unet': 'lightblue'}
+            names_dict = {'lstm': 'LSTM', 'unet': 'U-Net', 'conv1d': 'CNN', 'transformer': 'Transformer'}
+            for modeltype in modeltypes:
+                model = self.modelLoader(modeltype)
+                model.train()
+                # self.enable_dropout(model)
 
-            dataloader = np.load(self.data_folder + "val_data_aligned.npz")['arr']
-            data = dataloader[-1]
+                dataloader = np.load(self.data_folder + "val_data_aligned.npz")['arr']
+                data = dataloader[-1]
 
-            preds_list = []
-            progress_bar = tqdm(range(runs), total=runs, desc='Monte Carlo Dropout')
-            for _ in progress_bar:
-                data = torch.Tensor(data).to(self.dtype).to(self.device)
-                # stack the inputs and feed as 3 channel input
-                data = data.squeeze(2)
-                if self.no_gluc:
-                    input = data[:, :-2, :].to(self.dtype)
-                else:
-                    input = data[:, :-1, :].to(self.dtype)
-            
-                target = data[:, -1, :]
-
-                if modeltype == "conv1d" or modeltype == "lstm" or modeltype == "unet":
-                    output = model(input).to(self.dtype).squeeze()
-                elif modeltype == "transformer":
-                    output = model(target, input).to(self.dtype).squeeze()
-                output_arr = ((output * self.train_std) + self.train_mean)
-                preds_list.append(output_arr[-1].cpu().detach().numpy())
-            
-            target_arr = ((target[-1] *self.train_std) + self.train_mean).cpu().detach().numpy()
-            predictions = torch.Tensor(np.array(preds_list))
-            mean_prediction = predictions.mean(dim=0)
-            uncertainty = predictions.std(dim=0)
-
-            mean_dict[modeltype] = mean_prediction
-            std_dict[modeltype] = uncertainty
-
-            mean_arr = mean_prediction.cpu().detach().numpy()
-            std_arr = uncertainty.cpu().detach().numpy()
-            lower_arr = mean_arr - std_arr
-            upper_arr = mean_arr + std_arr
-
-            time = np.arange(0, predictions.shape[-1], 1) * 5
-
-            if modeltype != 'transformer':
-                plt.plot(time, mean_arr, color = color_means[modeltype], label=names_dict[modeltype], linewidth = 1)
-                plt.fill_between(time, lower_arr, upper_arr, color=color_stds[modeltype], alpha=0.25)
-                continue
-            plt.plot(time, mean_arr, color = color_means[modeltype], label=names_dict[modeltype], linewidth = 2)
-            plt.fill_between(time, lower_arr, upper_arr, color=color_stds[modeltype], alpha=0.5)
-
-        plt.plot(time, target_arr, color = 'black', label='Target', linewidth = 2, linestyle = '--')
-
-        # Set labels and title
-        plt.xlabel("Interval", fontsize=12, fontweight='bold')
-        plt.ylabel("Glucose Value (mg/dL)", fontsize=12, fontweight='bold')
-        plt.title(f"Monte Carlo Dropout", fontsize=14, fontweight='bold')
-
-        plt.gca().set_facecolor('white')
-        plt.grid(True, color='grey', linestyle='--')
-        plt.legend(loc = "upper left", prop={'size': 12})
-
-        # Save the plot
-        plt.savefig(f'{self.plots_folder}mcd_plot.png')
-        
-        return mean_prediction, uncertainty, preds_list
-
-    def permutation_importance(self, feature_lst):
-        """
-        Run Permutation Importance
-        """
-        model = self.modelLoader(self.modelType)
-        criterion = nn.MSELoss()
-        val_dataloader = np.load(self.data_folder + "val_data_aligned.npz")['arr']
-
-        val_losses = []
-        val_accs = []
-
-        model.eval()
-
-        for feat_idx in range(self.num_features):
-            print(f"feature {feat_idx + 1}")
-            
-            with torch.no_grad():
-                lossLst = []
-                accLst = []
-
-                for _, data in enumerate(val_dataloader):
+                preds_list = []
+                progress_bar = tqdm(range(runs), total=runs, desc='Monte Carlo Dropout')
+                for _ in progress_bar:
                     data = torch.Tensor(data).to(self.dtype).to(self.device)
                     # stack the inputs and feed as 3 channel input
                     data = data.squeeze(2)
@@ -255,46 +110,145 @@ class Analysis:
                         input = data[:, :-2, :].to(self.dtype)
                     else:
                         input = data[:, :-1, :].to(self.dtype)
-
-                    indices = torch.randperm(input.size(2))
-
-                    input[:, feat_idx, :] = input[:, feat_idx, indices]
-                    # input[:, feat_idx, :] = torch.zeros_like(input[:, feat_idx, :])
-
+                
                     target = data[:, -1, :]
-                    
-                    if self.modelType == "conv1d" or self.modelType == "lstm" or self.modelType == "lstm_e" or self.modelType == "unet":
+
+                    if modeltype == "conv1d" or modeltype == "lstm" or modeltype == "unet":
                         output = model(input).to(self.dtype).squeeze()
-                    elif self.modelType == "transformer":
+                    elif modeltype == "transformer":
                         output = model(target, input).to(self.dtype).squeeze()
-                    
-                    # loss is only calculated from the main task
-                    loss = criterion(output, target)
-
-                    lossLst.append(loss.item())
                     output_arr = ((output * self.train_std) + self.train_mean)
-                    target_arr = ((target * self.train_std) + self.train_mean)
-                    accLst.append(1 - self.mape(output_arr, target_arr))
+                    preds_list.append(output_arr[-1].cpu().detach().numpy())
+                
+                target_arr = ((target[-1] *self.train_std) + self.train_mean).cpu().detach().numpy()
+                predictions = torch.Tensor(np.array(preds_list))
+                mean_prediction = predictions.mean(dim=0)
+                uncertainty = predictions.std(dim=0)
 
-            print(f"val loss: {np.mean(lossLst)} val accuracy: {np.mean(accLst)}")
-            val_losses.append(np.mean(lossLst))
-            val_accs.append(np.mean(accLst))
-        # Create a list of tuples (value, original_index)
-        indexed_losses = list(enumerate(val_losses))
-        indexed_accs = list(enumerate(val_accs))
+                mean_dict[modeltype] = mean_prediction
+                std_dict[modeltype] = uncertainty
 
-        # Sort the list of tuples by the values
-        indexed_losses.sort(key=lambda x: x[1], reverse=True)
-        indexed_accs.sort(key=lambda x: x[1])
+                mean_arr = mean_prediction.cpu().detach().numpy()
+                std_arr = uncertainty.cpu().detach().numpy()
+                lower_arr = mean_arr - std_arr
+                upper_arr = mean_arr + std_arr
 
-        # Assign ranks based on the sorted order
-        for rank, (index, value) in enumerate(indexed_losses):
-            val_losses[index] = rank + 1
-        for rank, (index, value) in enumerate(indexed_accs):
-            val_accs[index] = rank + 1
+                time = np.arange(0, predictions.shape[-1], 1) * 5
 
-        print("Ranked by Losses (Most Important to Least):", [feature_lst[i - 1] for i in val_losses])
-        print("Ranked by Accuracy (Most Important to Least):", [feature_lst[i - 1] for i in val_accs])
+                if modeltype != 'transformer':
+                    plt.plot(time, mean_arr, color = color_means[modeltype], label=names_dict[modeltype], linewidth = 1)
+                    plt.fill_between(time, lower_arr, upper_arr, color=color_stds[modeltype], alpha=0.25)
+                    continue
+                plt.plot(time, mean_arr, color = color_means[modeltype], label=names_dict[modeltype], linewidth = 2)
+                plt.fill_between(time, lower_arr, upper_arr, color=color_stds[modeltype], alpha=0.5)
+
+            plt.plot(time, target_arr, color = 'black', label='Target', linewidth = 2, linestyle = '--')
+
+            # Set labels and title
+            plt.xlabel("Interval", fontsize=12, fontweight='bold')
+            plt.ylabel("Glucose Value (mg/dL)", fontsize=12, fontweight='bold')
+            plt.title(f"Monte Carlo Dropout", fontsize=14, fontweight='bold')
+
+            plt.gca().set_facecolor('white')
+            plt.grid(True, color='grey', linestyle='--')
+            plt.legend(loc = "upper left", prop={'size': 12})
+
+            # Save the plot
+            plt.savefig(f'{self.plots_folder}mcd_plot.png')
+            
+            return mean_prediction, uncertainty, preds_list
+
+    def feature_ablation(self, feature_lst, num_trials = 100):
+        """
+        Run Feature Ablation
+        """
+        with torch.no_grad():
+            model = self.modelLoader(self.modelType)
+            criterion = nn.MSELoss()
+            val_dataloader = np.load(self.data_folder + "val_data_aligned.npz")['arr']
+
+            val_losses = []
+            val_accs = []
+
+            model.eval()
+
+            losses_dict = {feat: 0 for feat in feature_lst}
+            accs_dict = {feat: 0 for feat in feature_lst}
+            for trial in range(num_trials):
+                print("==================================")
+                print(f"trial {trial + 1}")
+                print("==================================")
+                for feat_idx in range(self.num_features):
+                    feature = feature_lst[feat_idx]
+                    print(f"feature {feature}")
+                    indices = torch.randperm(self.seq_length)
+                    
+                    with torch.no_grad():
+                        lossLst = []
+                        accLst = []
+
+                        for _, data in enumerate(val_dataloader):
+                            data = torch.Tensor(data).to(self.dtype).to(self.device)
+                            # stack the inputs and feed as 3 channel input
+                            data = data.squeeze(2)
+                            if self.no_gluc:
+                                input = data[:, :-2, :].to(self.dtype)
+                            else:
+                                input = data[:, :-1, :].to(self.dtype)
+
+                            # indices = torch.randperm(input.size(2))
+
+                            mu = 0 
+                            sigma = 1
+                            size = 1
+                            rand_num = np.random.normal(mu, sigma, size)[0]
+                            input[:, feat_idx, :] = torch.ones_like(input[:, feat_idx, :]).to(self.dtype).to(self.device) * rand_num
+                            # input = torch.zeros_like(input).to(self.dtype).to(self.device)
+
+                            target = data[:, -1, :]
+                            # tgt = torch.zeros_like(data[:, -1, :]).to(self.dtype).to(self.device)
+                            
+                            if self.modelType == "conv1d" or self.modelType == "lstm" or self.modelType == "lstm_e" or self.modelType == "unet":
+                                output = model(input).to(self.dtype).squeeze()
+                            elif self.modelType == "transformer":
+                                sos_token = torch.ones(self.train_batch_size, 1).to(self.dtype).to(self.device) * self.sos_token
+                                target = torch.cat((sos_token, target[:, :-1]), dim=1)
+                                output = model(target, input).to(self.dtype).squeeze()
+                            
+                            # # loss is only calculated from the main task
+                            loss = criterion(output, target)
+
+                            lossLst.append(loss.item())
+                            output_arr = ((output * self.train_std) + self.train_mean)
+                            target_arr = ((target * self.train_std) + self.train_mean)
+                            accLst.append(1 - self.mape(output_arr, target_arr))
+
+                            # plt.plot(output_arr[-1].cpu().detach().numpy())
+                            # plt.plot(target_arr[-1].cpu().detach().numpy())
+                            # plt.savefig(self.plots_folder + "permutation_importance.png")
+                            # plt.close()
+                            # exit()
+
+                    # print(f"val loss: {np.mean(lossLst)} val accuracy: {np.mean(accLst)}")
+                    losses_dict[feature] += np.mean(lossLst)
+                    accs_dict[feature] += np.mean(accLst)
+                # Create a list of tuples (value, original_index)
+                indexed_losses = feature_lst.copy()
+                indexed_accs = feature_lst.copy()
+
+                # Sort the list of tuples by the values
+                indexed_losses.sort(key=lambda x: losses_dict[x])
+                indexed_accs.sort(key=lambda x: accs_dict[x], reverse=True)
+
+            print("Losses Ranking")
+            for key in losses_dict.keys():
+                print(f"{key}: {losses_dict[key]}")
+            print("Accuracy Ranking")
+            for key in accs_dict.keys():
+                print(f"{key}: {accs_dict[key]}")
+
+            print("Ranked by Losses (Most Important to Least):", [feature for feature in indexed_losses])
+            print("Ranked by Accuracy (Most Important to Least):", [feature for feature in indexed_accs])
 
     def plot_model(self):
         """
@@ -332,16 +286,20 @@ class Analysis:
         
         samples = [str(i).zfill(3) for i in range(1, 17)]
         conv1d = Conv1DModel(num_features = self.num_features, dropout_p = self.dropout_p, seq_len = self.seq_length)
-        # lstm = LstmModel(num_features = self.num_features, input_size = self.seq_length, hidden_size = self.hidden_size, num_layers = self.num_layers, batch_first = True, dropout_p = self.dropout_p, dtype = self.dtype)
-        lstm = LstmEnhancedModel(hidden_size = self.hidden_size_e, num_layers = self.num_layers_e, seq_length = self.seq_length, dropout_p = self.dropout_p, norm_first = True, dtype = self.dtype, num_seqs = self.num_features, no_gluc = self.no_gluc, batch_first = True, bidirectional = True)
+        lstm = LstmModel(num_features = self.num_features, input_size = self.seq_length, hidden_size = self.hidden_size, num_layers = self.num_layers, batch_first = True, dropout_p = self.dropout_p, dtype = self.dtype)
+        # lstm = LstmEnhancedModel(hidden_size = self.hidden_size_e, num_layers = self.num_layers_e, seq_length = self.seq_length, dropout_p = self.dropout_p, norm_first = True, dtype = self.dtype, num_seqs = self.num_features, no_gluc = self.no_gluc, batch_first = True, bidirectional = self.bidirectional)
         transformer = TransformerModel(num_features = self.dim_model, num_head = self.num_head, seq_length = self.seq_length, dropout_p = self.dropout_p, norm_first = True, dtype = self.dtype, num_seqs = self.num_features, no_gluc = self.no_gluc)
         unet = UNet(self.num_features, normalize = False, seq_len = self.seq_length)
 
         if self.no_gluc:
             conv1d.load_state_dict(torch.load(self.checkpoint_folder + "conv1d_no_gluc.pth")['state_dict'])
-            lstm.load_state_dict(torch.load(self.checkpoint_folder + "lstm_e_no_gluc.pth")['state_dict'])
+            conv1d = conv1d.to(self.device)
+            lstm.load_state_dict(torch.load(self.checkpoint_folder + "lstm_no_gluc.pth")['state_dict'])
+            lstm = lstm.to(self.device)
             transformer.load_state_dict(torch.load(self.checkpoint_folder + "transformer_no_gluc.pth")['state_dict'])
+            transformer = transformer.to(self.device)
             unet.load_state_dict(torch.load(self.checkpoint_folder + "unet_no_gluc.pth")['state_dict'])
+            unet = unet.to(self.device)
         else:
             conv1d.load_state_dict(torch.load(self.checkpoint_folder + "conv1d.pth")['state_dict'])
             lstm.load_state_dict(torch.load(self.checkpoint_folder + "lstm.pth")['state_dict'])
@@ -352,31 +310,34 @@ class Analysis:
         output_dict = {'conv1d': None, 'lstm': None, 'transformer': None, 'unet': None, 'target': None}
 
         val_data = np.load(self.data_folder + "val_data.npz")['arr'][-1]
+        with torch.no_grad():
+            for model_name in model_dict.keys():
+                model = model_dict[model_name]
+                data = torch.Tensor(val_data).to(self.dtype).to(self.device)
+                # stack the inputs and feed as 3 channel input
+                data = data.squeeze(2)
+                if self.no_gluc:
+                    input = data[:, :-2, :].to(self.dtype)
+                else:
+                    input = data[:, :-1, :].to(self.dtype)
 
-        for model_name in model_dict.keys():
-            model = model_dict[model_name]
-            data = torch.Tensor(val_data).to(self.dtype).to(self.device)
-            # stack the inputs and feed as 3 channel input
-            data = data.squeeze(2)
-            if self.no_gluc:
-                input = data[:, :-2, :].to(self.dtype)
-            else:
-                input = data[:, :-1, :].to(self.dtype)
+                target = data[:, -1, :]
 
-            target = data[:, -1, :]
+                if output_dict['target'] == None:
+                    target_arr = ((target * self.train_std) + self.train_mean)
+                    output_dict['target'] = target_arr
 
-            if output_dict['target'] == None:
-                target_arr = ((target * self.train_std) + self.train_mean)
-                output_dict['target'] = target_arr
+                if model_name == "conv1d" or model_name == "lstm" or model_name == "unet":
+                    output = model(input).to(self.dtype).squeeze()
+                elif model_name == "transformer":
+                    sos_token = torch.ones(self.train_batch_size, 1).to(self.dtype).to(self.device) * self.sos_token
+                    tgt = target
+                    tgt = torch.cat((sos_token, tgt[:, :-1]), dim=1)
+                    output = model(tgt, input).to(self.dtype).squeeze()
 
-            if model_name == "conv1d" or model_name == "lstm" or model_name == "unet":
-                output = model(input).to(self.dtype).squeeze()
-            elif model_name == "transformer":
-                output = model(target, input).to(self.dtype).squeeze()
+                output_arr = ((output * self.train_std) + self.train_mean)
 
-            output_arr = ((output * self.train_std) + self.train_mean)
-
-            output_dict[model_name] = output_arr
+                output_dict[model_name] = output_arr
         
         minutes = np.arange(0, 28 * 5, 5)
 
@@ -573,6 +534,6 @@ if __name__ == "__main__":
     obj = Analysis(mainDir)
     # obj.plot_lopocv()
     # obj.monte_carlo_dropout()
-    # obj.plot_performance()
+    obj.plot_performance()
     # obj.plot_output()
-    obj.permutation_importance(feature_lst)
+    # obj.feature_ablation(feature_lst)
