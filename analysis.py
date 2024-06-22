@@ -33,9 +33,6 @@ class Analysis(runModel):
         elif modelType == "lstm":
             print(f"model {modelType}")
             return LstmModel(num_features = self.num_features, input_size = self.seq_length, hidden_size = self.hidden_size, num_layers = self.num_layers, batch_first = True, dropout_p = self.dropout_p, dtype = self.dtype).to(self.device)
-        elif modelType == "lstm_e":
-            print(f'model {modelType}')
-            return LstmEnhancedModel(hidden_size = self.hidden_size_e, num_layers = self.num_layers_e, seq_length = self.seq_length, dropout_p = self.dropout_p, norm_first = True, dtype = self.dtype, num_seqs = self.num_features, no_gluc = self.no_gluc, batch_first = True, bidirectional = self.bidirectional).to(self.device)
         elif modelType == "transformer":
             print(f"model {modelType}")
             return TransformerModel(num_features = self.dim_model, num_head = self.num_head, seq_length = self.seq_length, dropout_p = self.dropout_p, norm_first = True, dtype = self.dtype, num_seqs = self.num_features, no_gluc = self.no_gluc, bidirectional = self.bidirectional).to(self.device)
@@ -58,9 +55,6 @@ class Analysis(runModel):
         elif modelType == "lstm":
             print(f"model {modelType}")
             model = LstmModel(num_features = self.num_features, input_size = self.seq_length, hidden_size = self.hidden_size, num_layers = self.num_layers, batch_first = True, dropout_p = self.dropout_p, dtype = self.dtype, bidirectional = self.bidirectional)
-        elif modelType == "lstm_e":
-            print(f"model {modelType}")
-            model = LstmEnhancedModel(hidden_size = self.hidden_size_e, num_layers = self.num_layers_e, seq_length = self.seq_length, dropout_p = self.dropout_p, norm_first = True, dtype = self.dtype, num_seqs = self.num_features, no_gluc = self.no_gluc, batch_first = True, bidirectional = self.bidirectional)
         elif modelType == "transformer":
             print(f"model {modelType}")
             model = TransformerModel(num_features = self.dim_model, num_head = self.num_head, seq_length = self.seq_length, dropout_p = self.dropout_p, norm_first = True, dtype = self.dtype, num_seqs = self.num_features, no_gluc = self.no_gluc)
@@ -208,7 +202,7 @@ class Analysis(runModel):
                             target = data[:, -1, :]
                             # tgt = torch.zeros_like(data[:, -1, :]).to(self.dtype).to(self.device)
                             
-                            if self.modelType == "conv1d" or self.modelType == "lstm" or self.modelType == "lstm_e" or self.modelType == "unet":
+                            if self.modelType == "conv1d" or self.modelType == "lstm" or self.modelType == "unet":
                                 output = model(input).to(self.dtype).squeeze()
                             elif self.modelType == "transformer":
                                 sos_token = torch.ones(self.train_batch_size, 1).to(self.dtype).to(self.device) * self.sos_token
