@@ -43,18 +43,20 @@ class TransformerModel(nn.Module):
         self.embeddings = nn.ModuleList([nn.Linear(1, self.num_features, dtype = self.dtype) for _ in range(self.num_seqs)])
         
         # ENCODER LAYERS
-        self.encoders = nn.ModuleList([nn.TransformerEncoderLayer(d_model=self.seq_length, nhead=self.num_head, norm_first = self.norm_first, dtype = self.dtype) for _ in range(self.num_seqs)])
+        self.encoders = nn.ModuleList([nn.TransformerEncoderLayer(d_model=self.num_features, nhead=self.num_head, norm_first = self.norm_first, dtype = self.dtype) for _ in range(self.num_seqs)])
 
         # DECODER LAYERS
-        self.decoder_layer = nn.TransformerDecoderLayer(d_model=self.seq_length, nhead=self.num_head, dtype = self.dtype)
+        self.decoder_layer = nn.TransformerDecoderLayer(d_model=self.num_features, nhead=self.num_head, dtype = self.dtype)
         self.decoder = nn.TransformerDecoder(self.decoder_layer, 1)
         # self.decoder = nn.TransformerDecoder(self.decoder_layer, num_layers=1)  # Using a single layer
 
         # FULLY-CONNECTED LAYERS
         self.dropout = nn.Dropout(dropout_p)
-        self.fc1 = nn.Linear(self.seq_length * self.num_seqs, self.seq_length, dtype = self.dtype)
+        self.fc1 = nn.Linear(self.num_features * self.num_seqs, self.num_features, dtype = self.dtype)
         self.fc2 = nn.Linear(self.num_features, self.num_features // 2, dtype = self.dtype)
         self.fc3 = nn.Linear(self.num_features // 2, 1, dtype = self.dtype)
+
+        self.sos_token = 0
 
     # function: forward of model
     # input: src, tgt, tgt_mask
@@ -72,19 +74,22 @@ class TransformerModel(nn.Module):
                 idx += 1
             idx = 0
             for layer in self.encoders:
-                outputs[idx] = layer(outputs[idx])
+                output = outputs[idx].permute(0,2,1)
+                outputs[idx] = layer(output)
                 idx += 1
 
             out = torch.cat(outputs, -1).to(self.dtype)
 
-            out = F.silu(self.fc1(out))
-
+            encoding = F.silu(self.fc1(out))
+            
             tgt = tgt.unsqueeze(1).reshape(-1,1)
             tgt = self.embedding_gluc(tgt)
             tgt = tgt.view(batch_size, self.num_features, self.seq_length)
+            tgt = tgt.permute(0,2,1)
+            out = self.decoder(tgt = tgt, memory = encoding, tgt_mask = self.get_causal_mask(tgt.size(2)), tgt_is_causal=True)
             
-            out = self.decoder(tgt = tgt, memory = out, tgt_mask = self.get_causal_mask(tgt.size(2)), tgt_is_causal=True)
             out = torch.tensor(out.clone().detach().requires_grad_(True), dtype=self.fc1.weight.dtype)
+            # print(out)
             out = out.reshape(batch_size * self.seq_length, self.num_features)
             out = F.silu(self.fc2(self.dropout(out)))
             out = self.fc3(self.dropout(out))

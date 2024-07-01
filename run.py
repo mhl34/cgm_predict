@@ -75,7 +75,7 @@ class runModel:
 
         # transformer parameters
         self.dim_model = 128
-        self.num_head = self.seq_length
+        self.num_head = 32
 
         # early stopping parameter
         self.patience = 20
@@ -255,9 +255,7 @@ class runModel:
                 if self.modelType == "conv1d" or self.modelType == "lstm" or self.modelType == "unet":
                     output = model(input).to(self.dtype).squeeze()
                 elif self.modelType == "transformer":
-                    sos_token = torch.ones(self.train_batch_size, 1).to(self.dtype).to(self.device) * self.sos_token
-                    tgt = target
-                    tgt = torch.cat((sos_token, tgt[:, :-1]), dim=1)
+                    tgt = None
                     output = model(tgt, input).to(self.dtype).squeeze()
                 
                 # loss is only calculated from the main task
