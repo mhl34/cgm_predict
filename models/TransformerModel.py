@@ -35,8 +35,8 @@ class TransformerModel(nn.Module):
         self.dtype = dtype
         self.num_seqs = num_seqs
         self.no_gluc = no_gluc,
-        # self.device = 'cuda' if torch.cuda.is_available() else 'cpu'
-        self.device = 'cpu'
+        self.device = 'cuda' if torch.cuda.is_available() else 'cpu'
+        # self.device = 'cpu'
 
         # EMBEDDING LINEAR LAYERS
         self.embedding_gluc = nn.Linear(1, self.num_features, dtype = self.dtype)

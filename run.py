@@ -36,8 +36,8 @@ class runModel:
         self.modelType = args.modelType
         self.dtype = torch.double if self.modelType == "conv1d" else torch.float64
         self.mainDir = mainDir
-        # self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-        self.device = 'cpu'
+        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        # self.device = 'cpu'
         self.max_norm = 1
         self.seq_length = int(args.seq_len)
         self.num_epochs = int(args.num_epochs)
@@ -255,7 +255,7 @@ class runModel:
                 if self.modelType == "conv1d" or self.modelType == "lstm" or self.modelType == "unet":
                     output = model(input).to(self.dtype).squeeze()
                 elif self.modelType == "transformer":
-                    tgt = None
+                    # tgt = None
                     output = model(tgt, input).to(self.dtype).squeeze()
                 
                 # loss is only calculated from the main task
