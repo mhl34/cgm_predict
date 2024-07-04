@@ -24,7 +24,7 @@ def dateParser(date):
     formats = ['%Y-%m-%d %H:%M:%S.%f', '%Y-%m-%d %H:%M:%S', '%m/%d/%Y %H:%M', '%m/%d/%y %H:%M']
     for fmt in formats:
         try:
-            return datetime.datetime.strptime(date, fmt)
+            return datetime.datetime.strptime(date, fmt).timestamp()
         except ValueError:
             pass
         except TypeError:
