@@ -6,13 +6,19 @@ from scipy import signal
 from datetime import datetime
 from utils import dateParser
 import matplotlib.pyplot as plt
+from darts import TimeSeries
+from darts.models import TransformerModel
+from darts.dataprocessing.transformers import Scaler
+from darts.metrics import mape
+import os
 
 class FlirtFeatureDataset(Dataset):
     def __init__(self):
         super(FlirtFeatureDataset, self).__init__()
+        self.samples = [str(i).zfill(3) for i in range(1, 11)]
+
         # directory
         self.data_dir = "/media/nvme1/expansion/glycemic_health_data/physionet.org/files/big-ideas-glycemic-wearable/1.1.2"
-        self.sample = "001"
 
         # frequencies
         self.freq_dict = {
@@ -22,8 +28,10 @@ class FlirtFeatureDataset(Dataset):
             'eda': 4
         } 
         self.max_freq = max(self.freq_dict.values())
+        self.resample_str = '1000ms'
+        self.normalize = True
 
-    def eda(self, sample):
+    def eda(self, sample, resample_str = '1000ms'):
         """
         function: processes eda data given sample into tonic and phasic components, sampled down to a second
         returns: DataFrame of Tonic EDA, Phasic EDA, and time
@@ -34,24 +42,23 @@ class FlirtFeatureDataset(Dataset):
         data = pd.read_csv(filename, skiprows = 1, names=['datetime', 'eda'], index_col = False)
         data['datetime'] = pd.date_range(start = data.iloc[0]['datetime'], periods = len(data), freq = str(1 / self.freq_dict['eda'] * 1000) + 'ms')
         data.set_index('datetime', inplace=True)
-        data = data.resample('1000ms').mean()
 
         # create dataframe
         eda = data['eda']
-        time = data.index.to_numpy()
         eda_features, _ = nk.eda_process(eda, sampling_rate = self.freq_dict['eda'])
-        eda_tonic = eda_features['EDA_Tonic']
-        eda_phasic = eda_features['EDA_Phasic']
+        data['EDA_Tonic'] = eda_features['EDA_Tonic'].values
+        data['EDA_Phasic'] = eda_features['EDA_Phasic'].values
+        data = data.resample(resample_str).mean()
 
         eda_dict = {
-            'time': time,
-            'eda_tonic': eda_tonic, 
-            'eda_phasic': eda_phasic
+            'time': data.index.to_numpy(),
+            'eda_tonic': data['EDA_Tonic'], 
+            'eda_phasic': data['EDA_Phasic']
         }
 
         return pd.DataFrame(eda_dict)
 
-    def hr(self, sample):
+    def hr(self, sample, resample_str = '1000ms'):
         """
         function: get the heart rate and time, sampled down to a second
         returns: DataFrame of hr and time
@@ -61,7 +68,7 @@ class FlirtFeatureDataset(Dataset):
         data = pd.read_csv(filename, skiprows = 1, names = ['datetime', 'hr'], index_col = False)
         data['datetime'] = pd.date_range(start = data.iloc[0]['datetime'], periods = len(data), freq = str(1 / self.freq_dict['hr'] * 1000) + 'ms')
         data.set_index('datetime', inplace=True)
-        data = data.resample('1000ms').mean()
+        data = data.resample(resample_str).mean()
 
         time = data.index.to_numpy()
         hr_data = data['hr']
@@ -73,7 +80,7 @@ class FlirtFeatureDataset(Dataset):
 
         return pd.DataFrame(hr_dict)
 
-    def acc(self, sample):
+    def acc(self, sample, resample_str = '1000ms'):
         """
         function: get the mean accelerometry, averaged across the tri-axial measurement
         returns: DataFrame of acc and time
@@ -91,7 +98,7 @@ class FlirtFeatureDataset(Dataset):
         data['acc_max'] = acc_max
 
         data.set_index('datetime', inplace=True)
-        data = data.resample('1000ms').mean()
+        data = data.resample(resample_str).mean()
         time = data.index.to_numpy()
         acc_data = data['acc_max']
         
@@ -102,7 +109,7 @@ class FlirtFeatureDataset(Dataset):
         
         return pd.DataFrame(acc_dict)
 
-    def food(self, sample, window_sizes = None):
+    def food(self, sample, resample_str = '1000ms', window_sizes = None):
         """
         function: gets carb and sugar consumption for the past window_size input (window_size in minutes)
         returns: DataFrame of carb and sugar consumption
@@ -114,7 +121,7 @@ class FlirtFeatureDataset(Dataset):
         # duplicates are augmented slightly in order to allow for the subsequent indexing
         data['time_begin'] += pd.to_timedelta(data.groupby('time_begin').cumcount(), unit='ms')
         data.set_index('time_begin', inplace=True)
-        data = data.resample('S').asfreq()
+        data = data.resample(resample_str).asfreq()
         data = data.fillna(0)
 
         new_data = {}
@@ -125,19 +132,128 @@ class FlirtFeatureDataset(Dataset):
             new_data[f'sugar_{size}'] = data['sugar'].rolling(window = window_size, closed = 'right').sum().to_numpy()
         return pd.DataFrame(new_data)
 
-    def run(self):
-        eda = self.eda(self.sample)
-        hr = self.hr(self.sample)
-        acc = self.acc(self.sample)
-        food = self.food(self.sample, [5, 10, 15, 120, 240])
+    def gluc(self, sample):
+        """
+        function: gets the cgm data and outputs the dataframe of the cgm data and time
+        returns: DataFrame of cgm readings
+        """
+        filename = f"{self.data_dir}/{sample}/Dexcom_{sample}.csv"
 
-        # # merges
-        df = pd.merge(eda, hr, on = 'time')
-        df = pd.merge(df, acc, on = 'time')
-        df = pd.merge(df, food, on = 'time')
+        df = pd.read_csv(filename).iloc[12:]
+        df = df.fillna(0)
+        time = pd.to_datetime(df['Timestamp (YYYY-MM-DDThh:mm:ss)']).values
+        gluc = df['Glucose Value (mg/dL)'].values
+       
+        gluc_dict = {
+            'time': time, 
+            'gluc': gluc
+        }
         
-        print(df.head())
-        print(df.shape)
+        return pd.DataFrame(gluc_dict)
+
+
+    def run(self):
+        big_df = pd.DataFrame()
+        if not os.path.exists('data/big_df.pkl'):
+            for sample in self.samples:
+                print(sample)
+                eda = self.eda(sample, resample_str = self.resample_str)
+                hr = self.hr(sample, resample_str = self.resample_str)
+                acc = self.acc(sample, resample_str = self.resample_str)
+                food = self.food(sample, resample_str = self.resample_str, window_sizes = [5, 10, 15, 20, 25, 30, 120, 240])
+                gluc = self.gluc(sample)
+
+                # # # merges
+                df = pd.merge(gluc, hr, on = 'time')
+                df = pd.merge(df, eda, on = 'time')
+                df = pd.merge(df, acc, on = 'time')
+                df = pd.merge(df, food, on = 'time')
+
+                big_df = pd.concat([big_df, df], axis = 0, ignore_index = True)
+            big_df.to_pickle('data/big_df.pkl')
+        # drop the time
+        df = pd.read_pickle('data/big_df.pkl')
+        df = df.drop(columns = ['time'])
+        data = df.drop(columns = ['gluc'])
+
+        # Convert DataFrame to TimeSeries
+        target_ts = TimeSeries.from_dataframe(df[['gluc']])
+        data_ts = TimeSeries.from_dataframe(data)
+
+        
+
+        target_scaler = Scaler()
+        data_scaler = Scaler()
+
+        target_ts = target_scaler.fit_transform(target_ts)
+        data_ts = data_scaler.fit_transform(data_ts)
+
+        # Adjust the split to ensure sufficient history in validation
+        train_target, val_target = target_ts.split_before(0.8)
+        train_data, val_data = data_ts.split_before(0.8)
+
+        
+
+    def train_model(model_args, callbacks, train, val):
+        # Ensure the past covariates cover the required history
+        input_chunk_length = 20
+        output_chunk_length = 20
+
+        model = TransformerModel(
+            input_chunk_length=input_chunk_length,
+            output_chunk_length=output_chunk_length,
+            model_name='transformer_model',
+            n_epochs=20,
+            d_model=128,
+            nhead=32,
+            num_encoder_layers=16,
+            num_decoder_layers=16,
+            dim_feedforward=128,
+            dropout=0.5,
+            batch_size=128,
+            optimizer_kwargs={'lr': 1e-4},
+            random_state=42,
+        )
+
+        model.fit(
+            series=train_target,
+            past_covariates=train_data,
+            val_series=val_target,
+            val_past_covariates=val_data,
+            verbose=True
+        )
+
+        # test_data = TimeSeries.from_dataframe(data.iloc[len(train_target) - input_chunk_length:])
+        # test_data = data_scaler.fit_transform(test_data)
+        # test_target = TimeSeries.from_dataframe(df[['gluc']].iloc[len(train_target) - output_chunk_length:len(train_target)])
+        # test_target = target_scaler.fit_transform(test_target)
+
+        # predictions = model.predict(n=20, past_covariates=test_data)
+
+        # predictions = target_scaler.inverse_transform(predictions)
+        # test_target = target_scaler.inverse_transform(test_target)
+
+        # plt.figure(figsize=(10, 6))
+        # plt.plot(predictions.values(), label = "Predictions")
+        # plt.plot(test_target.values(), label = "Target")
+        # plt.savefig("plots/dart.png")
+
+        # # Evaluate the model
+        # print(test_target, predictions)
+        # print(f'MAPE: {mape(test_target, predictions)}')
+
+    def normalize_df(self, df):
+        """
+        function: returns a normalized copy of the dataset
+        returns: returns a normalized DataFrame
+        """
+        normalized_df = df.copy()
+        for column in df.columns:
+                if column != 'time':
+                    mean = df[column].mean()
+                    std = df[column].std()
+                    normalized_df[column] = (df[column] - mean) / std
+        return normalized_df
 
 if __name__ == "__main__":
     obj = FlirtFeatureDataset()
