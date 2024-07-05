@@ -15,7 +15,7 @@ import os
 class FlirtFeatureDataset(Dataset):
     def __init__(self):
         super(FlirtFeatureDataset, self).__init__()
-        self.samples = [str(i).zfill(3) for i in range(1, 11)]
+        self.samples = [str(i).zfill(3) for i in range(1, 17)]
 
         # directory
         self.data_dir = "/media/nvme1/expansion/glycemic_health_data/physionet.org/files/big-ideas-glycemic-wearable/1.1.2"
@@ -123,6 +123,7 @@ class FlirtFeatureDataset(Dataset):
         data.set_index('time_begin', inplace=True)
         data = data.resample(resample_str).asfreq()
         data = data.fillna(0)
+        data = data[data.index.notnull()]
 
         new_data = {}
         new_data['time'] = data.index.to_numpy()
@@ -148,33 +149,33 @@ class FlirtFeatureDataset(Dataset):
             'time': time, 
             'gluc': gluc
         }
-        
+
         return pd.DataFrame(gluc_dict)
 
 
     def run(self):
-        big_df = pd.DataFrame()
-        if not os.path.exists('data/big_df.pkl'):
-            for sample in self.samples:
-                print(sample)
-                eda = self.eda(sample, resample_str = self.resample_str)
-                hr = self.hr(sample, resample_str = self.resample_str)
-                acc = self.acc(sample, resample_str = self.resample_str)
-                food = self.food(sample, resample_str = self.resample_str, window_sizes = [5, 10, 15, 20, 25, 30, 120, 240])
-                gluc = self.gluc(sample)
+        for sample in self.samples:
+            if os.path.exists(f"data/data_{sample}.csv") and sample != "007":
+                continue
+            print(sample)
+            eda = self.eda(sample, resample_str = self.resample_str)
+            hr = self.hr(sample, resample_str = self.resample_str)
+            acc = self.acc(sample, resample_str = self.resample_str)
+            food = self.food(sample, resample_str = self.resample_str, window_sizes = [5, 10, 20, 30, 60, 120, 180, 240])
+            gluc = self.gluc(sample)
+            print(food.head())
 
-                # # # merges
-                df = pd.merge(gluc, hr, on = 'time')
-                df = pd.merge(df, eda, on = 'time')
-                df = pd.merge(df, acc, on = 'time')
-                df = pd.merge(df, food, on = 'time')
+            # # # merges
+            df = pd.merge(gluc, hr, on = 'time')
+            df = pd.merge(df, eda, on = 'time')
+            df = pd.merge(df, acc, on = 'time')
+            df = pd.merge(df, food, on = 'time')
 
-                big_df = pd.concat([big_df, df], axis = 0, ignore_index = True)
-            big_df.to_pickle('data/big_df.pkl')
-        # drop the time
-        df = pd.read_pickle('data/big_df.pkl')
-        df = df.drop(columns = ['time'])
-        data = df.drop(columns = ['gluc'])
+            df = df.dropna()
+
+            outfile = open(f"data/data_{sample}.csv", 'wb')
+            df.to_csv(outfile, index = False, header = True, sep = ',', encoding = 'utf-8')
+            outfile.close()
 
     def normalize_df(self, df):
         """
