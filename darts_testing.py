@@ -24,6 +24,12 @@ from pytorch_lightning.callbacks import EarlyStopping
 import pickle
 import os
 import torch
+import pytorch_lightning as pl
+import logging
+from tqdm import tqdm
+
+# Suppress specific log messages
+logging.getLogger("pytorch_lightning").setLevel(logging.ERROR)
 
 input_chunk_length = 20
 output_chunk_length = 20
@@ -35,20 +41,14 @@ optimizer_kwargs = {
     'weight_decay':  1e-8,
 }
 
-def train(models, train_df, test_df, input_chunk_length, output_chunk_length):
+def train(models, sel_sample, train_df, test_df, input_chunk_length, output_chunk_length):
     train_df = train_df.drop(columns = ['time', 'Unnamed: 0'])
     test_df = test_df.drop(columns = ['time', 'Unnamed: 0'])
     train_target = train_df[['gluc']]
     train_data = train_df.drop(columns = ['gluc'])
-    test_target = test_df[['gluc']].iloc[: input_chunk_length]
-    test_truth = test_df[['gluc']].iloc[input_chunk_length:]
-    test_data = test_df.drop(columns = ['gluc']).iloc[: len(test_df) - input_chunk_length]
 
     train_target, val_target = TimeSeries.from_dataframe(train_target).split_before(0.9)
     train_data, val_data = TimeSeries.from_dataframe(train_data).split_before(0.9)
-    test_target = TimeSeries.from_dataframe(test_target).shift(len(train_target) - input_chunk_length)
-    test_truth = TimeSeries.from_dataframe(test_truth).shift(len(train_target) - input_chunk_length)
-    test_data = TimeSeries.from_dataframe(test_data).shift(len(train_target) - input_chunk_length)
 
     data_scaler = Scaler()
     target_scaler = Scaler()
@@ -57,9 +57,6 @@ def train(models, train_df, test_df, input_chunk_length, output_chunk_length):
     train_data = data_scaler.fit_transform(train_data)
     val_target = target_scaler.fit_transform(val_target)
     val_data = data_scaler.fit_transform(val_data)
-    test_target = target_scaler.fit_transform(test_target)
-    test_truth = target_scaler.fit_transform(test_truth)
-    test_data = data_scaler.fit_transform(test_data)
 
 
     # store the mape of the validation
@@ -84,15 +81,35 @@ def train(models, train_df, test_df, input_chunk_length, output_chunk_length):
             val_past_covariates=val_data,
             verbose=True
         )
+        mape_dict[model_name] = 0
+        for start_idx in tqdm(range(0, len(test_df) - input_chunk_length - output_chunk_length, input_chunk_length), "testing"):
+            test_target = test_df[['gluc']].iloc[start_idx: start_idx + input_chunk_length]
+            test_truth = test_df[['gluc']].iloc[start_idx + input_chunk_length: start_idx + input_chunk_length + output_chunk_length]
+            test_data = test_df.drop(columns = ['gluc']).iloc[start_idx: start_idx + input_chunk_length]
 
-        predictions = model.predict(
-            n=len(test_truth), 
-            series = test_target, 
-            past_covariates=test_data
-        )
+            test_target = TimeSeries.from_dataframe(test_target).shift(len(train_target) - input_chunk_length)
+            test_truth = TimeSeries.from_dataframe(test_truth).shift(len(train_target) - input_chunk_length)
+            test_data = TimeSeries.from_dataframe(test_data).shift(len(train_target) - input_chunk_length)
 
-        predictions = target_scaler.inverse_transform(predictions)
-        test_truth = target_scaler.inverse_transform(test_truth)
+            test_target = target_scaler.fit_transform(test_target)
+            test_data = data_scaler.fit_transform(test_data)
+
+            predictions = model.predict(
+                n=len(test_truth), 
+                series = test_target, 
+                past_covariates=test_data,
+                verbose=False,
+                show_warnings=False,
+            )
+
+            predictions = target_scaler.inverse_transform(predictions)
+
+            # Evaluate the model
+            mape_val = mape(test_truth, predictions)
+
+            mape_dict[model_name] += mape_val
+
+        mape_dict[model_name] /= (len(test_df) - input_chunk_length - output_chunk_length) // input_chunk_length
 
         plt.figure(figsize=(10, 6))
         plt.title(f"{model_name} darts prediction")
@@ -100,18 +117,12 @@ def train(models, train_df, test_df, input_chunk_length, output_chunk_length):
         plt.plot(test_truth.values(), label = "Target")
         plt.legend()
         plt.savefig(f"plots/dart_{model_name}.png")
+        plt.close()
 
-        # Evaluate the model
-        mape_val = mape(test_truth, predictions)
-        print(f'MAPE: {mape_val}')
-
-        mape_dict[model_name] = mape_val
-
-        # redo the inverse transform
-        test_truth = target_scaler.fit_transform(test_truth)
+        print(f'MAPE: {mape_dict[model_name]}')
 
         # save model
-        model.save(f"saved_models/{model_name}_darts.pkl")
+        model.save(f"saved_models/{model_name}_darts_no_{sel_sample}.pkl")
 
     return mape_dict
 
@@ -274,7 +285,7 @@ for sel_sample in samples:
     if len(test_df) == 0:
         continue
 
-    mape_dict = train(models, train_df, test_df, input_chunk_length, output_chunk_length)
+    mape_dict = train(models, sel_sample, train_df, test_df, input_chunk_length, output_chunk_length)
 
     with open(f"performance/mape_dict_no_{sel_sample}.pickle", "wb") as file:
         pickle.dump(mape_dict, file)
