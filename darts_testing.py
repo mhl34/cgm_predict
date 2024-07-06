@@ -1,4 +1,5 @@
 from torch.utils.data import Dataset
+from torch.nn import HuberLoss, L1Loss
 import pandas as pd
 import numpy as np
 import neurokit2 as nk
@@ -24,9 +25,9 @@ import pickle
 import os
 import torch
 
-input_chunk_length = 40
-output_chunk_length = 40
-num_epochs = 200
+input_chunk_length = 20
+output_chunk_length = 20
+num_epochs = 100
 
 # train parameters
 optimizer_kwargs = {
@@ -39,13 +40,13 @@ def train(models, train_df, test_df, input_chunk_length, output_chunk_length):
     test_df = test_df.drop(columns = ['time', 'Unnamed: 0'])
     train_target = train_df[['gluc']]
     train_data = train_df.drop(columns = ['gluc'])
-    # test_target = test_df[['gluc']].iloc[: len(test_df) - input_chunk_length]
+    test_target = test_df[['gluc']].iloc[: input_chunk_length]
     test_truth = test_df[['gluc']].iloc[input_chunk_length:]
     test_data = test_df.drop(columns = ['gluc']).iloc[: len(test_df) - input_chunk_length]
 
     train_target, val_target = TimeSeries.from_dataframe(train_target).split_before(0.9)
     train_data, val_data = TimeSeries.from_dataframe(train_data).split_before(0.9)
-    # test_target = TimeSeries.from_dataframe(test_target).shift(len(train_target) - input_chunk_length)
+    test_target = TimeSeries.from_dataframe(test_target).shift(len(train_target) - input_chunk_length)
     test_truth = TimeSeries.from_dataframe(test_truth).shift(len(train_target) - input_chunk_length)
     test_data = TimeSeries.from_dataframe(test_data).shift(len(train_target) - input_chunk_length)
 
@@ -56,7 +57,7 @@ def train(models, train_df, test_df, input_chunk_length, output_chunk_length):
     train_data = data_scaler.fit_transform(train_data)
     val_target = target_scaler.fit_transform(val_target)
     val_data = data_scaler.fit_transform(val_data)
-    # test_target = target_scaler.fit_transform(test_target)
+    test_target = target_scaler.fit_transform(test_target)
     test_truth = target_scaler.fit_transform(test_truth)
     test_data = data_scaler.fit_transform(test_data)
 
@@ -84,7 +85,11 @@ def train(models, train_df, test_df, input_chunk_length, output_chunk_length):
             verbose=True
         )
 
-        predictions = model.predict(n=len(test_truth), past_covariates=test_data)
+        predictions = model.predict(
+            n=len(test_truth), 
+            series = test_target, 
+            past_covariates=test_data
+        )
 
         predictions = target_scaler.inverse_transform(predictions)
         test_truth = target_scaler.inverse_transform(test_truth)
@@ -96,8 +101,6 @@ def train(models, train_df, test_df, input_chunk_length, output_chunk_length):
         plt.legend()
         plt.savefig(f"plots/dart_{model_name}.png")
 
-        print(test_truth, predictions)
-
         # Evaluate the model
         mape_val = mape(test_truth, predictions)
         print(f'MAPE: {mape_val}')
@@ -106,6 +109,9 @@ def train(models, train_df, test_df, input_chunk_length, output_chunk_length):
 
         # redo the inverse transform
         test_truth = target_scaler.fit_transform(test_truth)
+
+        # save model
+        model.save(f"saved_models/{model_name}_darts.pkl")
 
     return mape_dict
 
@@ -119,7 +125,8 @@ def init_transformer():
         force_reset = True,
         random_state = 42,
         dropout = 0.3,
-        optimizer_kwargs =  optimizer_kwargs,
+        optimizer_kwargs = optimizer_kwargs,
+        loss_fn = HuberLoss(),
         lr_scheduler_cls = torch.optim.lr_scheduler.ReduceLROnPlateau,
     )
 
@@ -132,7 +139,8 @@ def init_rnn():
         force_reset = True,
         random_state = 42,
         dropout = 0.3,
-        optimizer_kwargs =  optimizer_kwargs,
+        optimizer_kwargs = optimizer_kwargs,
+        loss_fn = HuberLoss(),
         lr_scheduler_cls = torch.optim.lr_scheduler.ReduceLROnPlateau,
     )
 
@@ -146,6 +154,7 @@ def init_lstm():
         random_state = 42,
         dropout = 0.3,
         optimizer_kwargs =  optimizer_kwargs,
+        loss_fn = HuberLoss(),
         lr_scheduler_cls = torch.optim.lr_scheduler.ReduceLROnPlateau,
     )
 
@@ -158,6 +167,7 @@ def init_nbeats():
         random_state = 42,
         dropout = 0.3,
         optimizer_kwargs =  optimizer_kwargs,
+        loss_fn = HuberLoss(),
         lr_scheduler_cls = torch.optim.lr_scheduler.ReduceLROnPlateau,
     )
 
@@ -171,6 +181,7 @@ def init_nhits():
         random_state = 42,
         dropout = 0.3,
         optimizer_kwargs =  optimizer_kwargs,
+        loss_fn = HuberLoss(),
         lr_scheduler_cls = torch.optim.lr_scheduler.ReduceLROnPlateau,
     )
 
@@ -183,7 +194,11 @@ def init_dlinear():
         force_reset = True,
         random_state = 42,
         optimizer_kwargs =  optimizer_kwargs,
-        lr_scheduler_cls = torch.optim.lr_scheduler.ReduceLROnPlateau,
+        loss_fn = HuberLoss(),
+        lr_scheduler_cls = torch.optim.lr_scheduler.CosineAnnealingLR,
+        lr_scheduler_kwargs = {
+            "T_max": num_epochs
+        }
     )
 
 def init_nlinear():
@@ -195,6 +210,7 @@ def init_nlinear():
         force_reset = True,
         random_state = 42,
         optimizer_kwargs =  optimizer_kwargs,
+        loss_fn = HuberLoss(),
         lr_scheduler_cls = torch.optim.lr_scheduler.ReduceLROnPlateau,
     )
 
@@ -207,6 +223,7 @@ def init_tide():
         force_reset = True,
         random_state = 42,
         optimizer_kwargs =  optimizer_kwargs,
+        loss_fn = HuberLoss(),
         lr_scheduler_cls = torch.optim.lr_scheduler.ReduceLROnPlateau,
     )
 
@@ -220,17 +237,16 @@ def init_tsmixer():
         random_state = 42,
         dropout = 0.3,
         optimizer_kwargs =  optimizer_kwargs,
+        loss_fn = HuberLoss(),
         lr_scheduler_cls = torch.optim.lr_scheduler.ReduceLROnPlateau,
     )
 
 samples = [str(i).zfill(3) for i in range(1, 17)]
-if os.path.exists("performance/mape_dict.pickle"):
-    with open("performance/mape_dict.pickle", "rb") as file:
-        overall_mape_dict = pickle.load(file)
-else:
-    overall_mape_dict = {}
 # lopocv
 for sel_sample in samples:
+    if os.path.exists(f"performance/mape_dict_no_{sel_sample}.pickle"):
+        continue
+
     models = {
         "dlinear_model": init_dlinear(),
         "nhits_model": init_nhits(),
@@ -242,8 +258,6 @@ for sel_sample in samples:
         "tide_model": init_tide(),
         "tsmixer_model": init_tsmixer()
     }
-    if sel_sample in overall_mape_dict:
-        continue
     print("=============================")
     print(f"sample {sel_sample} left out")
     print("=============================")
@@ -257,10 +271,11 @@ for sel_sample in samples:
     # test_data with sel_sample
     test_df = pd.read_csv(f"data/data_{sel_sample}.csv")
 
+    if len(test_df) == 0:
+        continue
+
     mape_dict = train(models, train_df, test_df, input_chunk_length, output_chunk_length)
 
-    overall_mape_dict[sel_sample] = mape_dict
+    with open(f"performance/mape_dict_no_{sel_sample}.pickle", "wb") as file:
+        pickle.dump(mape_dict, file)
 
-if not os.path.exists("performance/mape_dict.pickle"):
-    with open("performance/mape_dict.pickle", "wb") as file:
-        pickle.dump(overall_mape_dict, file)
