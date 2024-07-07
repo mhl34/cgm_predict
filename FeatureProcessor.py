@@ -141,6 +141,7 @@ class FlirtFeatureDataset(Dataset):
         filename = f"{self.data_dir}/{sample}/Dexcom_{sample}.csv"
 
         df = pd.read_csv(filename).iloc[12:]
+        df = df.dropna()
         df = df.fillna(0)
         time = pd.to_datetime(df['Timestamp (YYYY-MM-DDThh:mm:ss)']).values
         gluc = df['Glucose Value (mg/dL)'].values
