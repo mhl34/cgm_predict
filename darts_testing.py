@@ -180,7 +180,7 @@ models = {
 }
 
 
-def personalized_train(models, sample, df, input_chunk_length, output_chunk_length):
+def personalized_train(models, sample, df, input_chunk_length, output_chunk_length, save = False):
     """
     function: train for the lopocv loop
     returns: results from training as well as testing from the left out sample
@@ -265,18 +265,20 @@ def personalized_train(models, sample, df, input_chunk_length, output_chunk_leng
 
         mape_dict[model_name] /= (len(test_df) - input_chunk_length - output_chunk_length) // input_chunk_length
 
-        plt.figure(figsize=(10, 6))
-        plt.title(f"{model_name} darts prediction")
-        plt.plot(predictions.values(), label = "Predictions")
-        plt.plot(test_truth.values(), label = "Target")
-        plt.legend()
-        plt.savefig(f"plots/dart_{model_name}_personal.png")
-        plt.close()
+        if save:
+            plt.figure(figsize=(10, 6))
+            plt.title(f"{model_name} darts prediction")
+            plt.plot(predictions.values(), label = "Predictions")
+            plt.plot(test_truth.values(), label = "Target")
+            plt.legend()
+            plt.savefig(f"plots/dart_{model_name}_personal.png")
+            plt.close()
 
         print(f'MAPE: {mape_dict[model_name]}')
 
         # save model
-        model.save(f"saved_models/{model_name}_darts_personal_{sample}.pkl")
+        if save:
+            model.save(f"saved_models/{model_name}_darts_personal_{sample}.pkl")
 
     return mape_dict
 
@@ -375,7 +377,7 @@ def lopocv_train(models, sel_sample, train_df, test_df, input_chunk_length, outp
 
     return mape_dict
 
-def personalized(samples):
+def personalized(samples, save = False):
     """
     function: trains on the first half of a person's data and then predicts
     returns: saved models and created files for each of the recorded MAPE values
@@ -408,10 +410,11 @@ def personalized(samples):
 
         # print(test_df.head())
 
-        mape_dict = personalized_train(models, sample, df, input_chunk_length, output_chunk_length)
+        mape_dict = personalized_train(models, sample, df, input_chunk_length, output_chunk_length, save)
 
-        with open(f"performance/mape_dict_personal_{sample}.pickle", "wb") as file:
-            pickle.dump(mape_dict, file)
+        if save:
+            with open(f"performance/mape_dict_personal_{sample}.pickle", "wb") as file:
+                pickle.dump(mape_dict, file)
 
 def lopocv(samples):
     """
@@ -456,24 +459,24 @@ def lopocv(samples):
         with open(f"performance/mape_dict_no_{sel_sample}.pickle", "wb") as file:
             pickle.dump(mape_dict, file)
 
-# LOPOCV analysis
-print("LOPOCV analysis")
-models_lst = list(models.keys())
-total = 0
-lopocv_mape_dict = {model: 0 for model in models_lst}
-for sample in samples:
-    if not os.path.exists(f"performance/mape_dict_no_{sample}.pickle"):
-        continue
-    with open(f"performance/mape_dict_no_{sample}.pickle", "rb") as file:
-        mape_dict = pickle.load(file)
-    min_val = min(mape_dict.values())
-    for model in models_lst:
-        lopocv_mape_dict[model] += mape_dict[model] / min_val
-    total+=1
+# # LOPOCV analysis
+# print("LOPOCV analysis")
+# models_lst = list(models.keys())
+# total = 0
+# lopocv_mape_dict = {model: 0 for model in models_lst}
+# for sample in samples:
+#     if not os.path.exists(f"performance/mape_dict_no_{sample}.pickle"):
+#         continue
+#     with open(f"performance/mape_dict_no_{sample}.pickle", "rb") as file:
+#         mape_dict = pickle.load(file)
+#     min_val = min(mape_dict.values())
+#     for model in models_lst:
+#         lopocv_mape_dict[model] += mape_dict[model] / min_val
+#     total+=1
 
-models_lst.sort(key=lambda x: lopocv_mape_dict[x])
-for model in models_lst:
-    print(f"model: {model} value: {lopocv_mape_dict[model] / total}")
+# models_lst.sort(key=lambda x: lopocv_mape_dict[x])
+# for model in models_lst:
+#     print(f"model: {model} value: {lopocv_mape_dict[model] / total}")
 
 # Personalized Analysis
 print("Personalized analysis")
@@ -493,3 +496,5 @@ for sample in samples:
 models_lst.sort(key=lambda x: personal_mape_dict[x])
 for model in models_lst:
     print(f"model: {model} value: {personal_mape_dict[model] / total}")
+
+# personalized(samples, save = False)
